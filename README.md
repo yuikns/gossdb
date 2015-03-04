@@ -1,7 +1,7 @@
 SSDB Go API Documentation {#mainpage}
 ============
 
-@author: [ideawu](http://www.ideawu.com/)
+@author: [matishsiao]
 
 ## About
 
@@ -15,6 +15,10 @@ Refer to the [PHP documentation](http://www.ideawu.com/ssdb/docs/php/) to checko
 
 Never use one connection(returned by ssdb.Connect()) through multi goroutines, because the connection is not thread-safe.
 
+## gossdb has support connection pool Automatic reuse
+## support functions
+	key/value functions
+	hash functions
 ## Example
 
 	package main
@@ -22,7 +26,7 @@ Never use one connection(returned by ssdb.Connect()) through multi goroutines, b
 	import (
 			"fmt"
 			"os"
-			"./ssdb"
+			"github.com/matishsiao/gossdb/ssdb"
 		   )
 		   
 	func main(){
@@ -30,32 +34,73 @@ Never use one connection(returned by ssdb.Connect()) through multi goroutines, b
 		port := 8888;
 		db, err := ssdb.Connect(ip, port);
 		if(err != nil){
-			os.Exit(1);
+		        os.Exit(1);
 		}
 		
 		var val interface{};
-		db.Set("a", "xxx");
+		db.Set("a", "xxx")
 		val, err = db.Get("a");
-		fmt.Printf("%s\n", val);
-		db.Del("a");
+		fmt.Printf("get A:%s\n", val)
 		val, err = db.Get("a");
-		fmt.Printf("%s\n", val);
+		fmt.Printf("Get val %s\n", val);
+		db.Set("count", "1")
+		fmt.Printf("Set Count:%d\n",1)
+		val, err = db.Incr("count", 5)
+		fmt.Printf("Get Count:%s\n",val) 
+		db.SetX( "expireT", "Test", 5)
 		
-		db.Do("zset", "z", "a", 3);
-		db.Do("multi_zset", "z", "b", -2, "c", 5, "d", 3);
-		resp, err := db.Do("zrange", "z", 0, 10);
-		if err != nil{
-			os.Exit(1);
+		val,err = db.Exists("expireT")
+		fmt.Printf("Exists expireT:%v\n",val)
+		val,err = db.Expire("expireT",5) 
+		fmt.Printf("Expire expireT:%v\n",val,err) 
+		val,err = db.KeyTTL("expireT") 
+		fmt.Printf("KeyTTL expireT:%v\n",val,err) 
+		val, err = db.SetNew("b","TestB" )
+		fmt.Printf("SetNew B:%v\n",val) 
+		val, err = db.GetSet("a","new_value")
+		fmt.Printf("GetSet A status:%v\n", val)
+		val, err = db.Get("a")
+		fmt.Printf("Get val A %s\n", val)
+		val, err = db.Get("expireT")
+		fmt.Printf("Get expireT:%s\n",val) 
+		val, err = db.Scan("","",10)  
+		for k,v := range val.(map[string]interface{}) { 
+			fmt.Printf("Scan[%s]%s\n",k,v)
 		}
-		if len(resp) % 2 != 1{
-			fmt.Printf("bad response");
-			os.Exit(1);
+		fmt.Printf("HashGetAll:%v\n",val)
+		val, err = db.HashSet("mdz-2014","test","10")
+		val, err = db.HashSet("mdz-2014","1231-0800","5")
+		val, err = db.HashSet("mdz-2014","1231-0900","1")
+		val, err = db.HashSet("mdz-2014","1231-1000","10")
+		val, err = db.HashSet("mdz-2015","1231-1100","5")
+		val, err = db.HashSet("mdz-2015","1231-1200","1")
+		val, err = db.HashGet("mdz-2014","test")
+		fmt.Printf("HashGet:%s\n",val)  
+		val, err = db.HashIncr("mdz-2014","test",5) 
+		fmt.Printf("HashIncr:%s\n",val)
+		val, err = db.HashExists("hash","test")
+		fmt.Printf("HashExists:%v\n",val)
+		val, err = db.HashSize("mdz-2014")
+		fmt.Printf("HashSize:%d\n",val)
+		val, err = db.HashScan("mdz-2014","1230","1231-2",10)
+		for k,v := range val.(map[string]interface{}) { 
+			fmt.Printf("HashScan[%s]%s\n",k,v)
 		}
-		
-		fmt.Printf("Status: %s\n", resp[0]);
-		for i:=1; i<len(resp); i+=2{
-			fmt.Printf("  %s : %3s\n", resp[i], resp[i+1]);
+		fmt.Printf("HashScan:%v\n",val)
+		multiSet := make(map[string]interface{})
+		multiSet["A"] = 1
+		multiSet["B"] = 2
+		multiSet["C"] = 3
+		val, err = db.HashMultiSet("mdz-2014",multiSet)
+		fmt.Printf("HashMultiSet:%v\n",val)
+		val, err = db.HashMultiGet("mdz-2014",[]string{"A","B"})  
+		for k,v := range val.(map[string]interface{}) { 
+			fmt.Printf("HashMultiGet[%s]%s\n",k,v)
 		}
-		return;
+		fmt.Printf("HashMultiGet:%v\n",val)
+		if ssdb.SSDBM != nil {
+			ssdb.SSDBM.Info()
+		} 
+		return
 	}
 
