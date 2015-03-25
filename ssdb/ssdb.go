@@ -363,7 +363,7 @@ func (c *Client) HashMultiSet(hash string,data map[string]interface{}) (interfac
 	return c.ProcessCmd("multi_hset",params)
 }
 
-func (c *Client) HashMultiGet(hash string,keys []string) (interface{}, error) {
+func (c *Client) HashMultiGet(hash string,keys []string) (map[string]interface{}, error) {
 	params := []interface{}{hash}
 	for _,v := range keys {
 		params = append(params, v)
