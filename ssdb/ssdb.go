@@ -91,7 +91,8 @@ func Connect(ip string, port int) (*Client, error) {
 		SSDBM = SSDBInit(ip,port,100)
 		SSDBM.Recycle()
 	}
-	SSDBM.mu.Lock()
+	fmt.Println("new connection")
+	/*SSDBM.mu.Lock()
 	for i,v := range SSDBM.connect_pool {
 		if v.reuse && !v.close_flag {
 			v.mu.Lock()
@@ -102,13 +103,13 @@ func Connect(ip string, port int) (*Client, error) {
 			SSDBM.connect_pool = append(SSDBM.connect_pool[:i], SSDBM.connect_pool[i+1:]...)
 		}
 	}
-	SSDBM.mu.Unlock()
+	SSDBM.mu.Unlock()*/
 	client,err := connect(SSDBM.ip,SSDBM.port)
 	if err != nil {
 		return nil,err
 	}
 	if client != nil {
-		SSDBM.connect_pool = append(SSDBM.connect_pool,client)
+		//SSDBM.connect_pool = append(SSDBM.connect_pool,client)
 		client.id = time.Now().UnixNano()
 		return client,nil
 	}
@@ -500,7 +501,10 @@ func (c *Client) parse() []string {
 	return []string{}
 }
 
+
 // Close The Client Connection
 func (c *Client) Close() error {
+	c.close_flag = true
+	c.reuse = false
 	return c.sock.Close()
 }
