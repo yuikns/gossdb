@@ -16,31 +16,82 @@ type Client struct {
 	reuse	bool
 	id int64
 	close_flag bool
+	last_time int64
+	success int64
+	count int64
 	mu	*sync.Mutex
 }
 
 type SSDB struct {
+	mu *sync.Mutex
 	connect_pool []*Client
 	max_connect int
 	ip string
 	port int
+	timeout int
 }
 var SSDBM *SSDB
+const layout = "2006-01-06 15:04:05"
 func SSDBInit(ip string, port int,max_connect int) *SSDB {
-	return &SSDB{max_connect:max_connect,ip:ip,port:port}
+	return &SSDB{max_connect:max_connect,ip:ip,port:port,timeout:30,mu:&sync.Mutex{}}
 }
 
+func (db *SSDB) Recycle() {
+	go func() {
+		for {
+			now := time.Now().Unix()
+			db.mu.Lock()
+			remove_count := 0
+			for i := len(db.connect_pool)-1;i >= 0;i-- {
+				v := db.connect_pool[i]
+				if v.close_flag || now - v.last_time > int64(db.timeout) {
+					v.Close()
+					remove_count++
+					if len(db.connect_pool) > 1 {
+						db.connect_pool = append(db.connect_pool[:i], db.connect_pool[i+1:]...)
+					} else {
+						db.connect_pool = nil
+					}	
+				}
+			}
+			db.mu.Unlock()
+			fmt.Println("remove_count:",remove_count)
+			time.Sleep(10 * time.Second)
+		}
+	}()
+}
+
+
 func (db *SSDB) Info() {
-	fmt.Printf("SSDBM Info[IP]:%v [Port]:%v [Max]:%v [Pool]:%v\n",db.ip,db.port,db.max_connect,len(SSDBM.connect_pool))
-	for k,v := range SSDBM.connect_pool {
-		fmt.Printf("[%d][status]:%v\n",k,v.reuse)
+	var use,nouse int
+	var count,success,close_count int64
+	for _,v := range SSDBM.connect_pool {
+		//fmt.Printf("[%d][status]:%v\n",k,v.reuse)
+		if v.reuse {
+			nouse++
+		} else {
+			use++
+		}
+		
+		if v.close_flag {
+			close_count++
+		}
+		count += v.count
+		success += v.success
 	}
+	failed := count - success
+	
+	now_time:=time.Now().Format(layout)
+	fmt.Printf("[%s] SSDBM Info[IP]:%v [Port]:%v [Max]:%v [Pool]:%v [Use]:%v [NoUse]:%v [Close]:%v [Total]:%v [Success]:%v [Failed]:%v\n",now_time,db.ip,db.port,db.max_connect,len(SSDBM.connect_pool),use,nouse,close_count,count,success,failed)
+	
 }
 
 func Connect(ip string, port int) (*Client, error) {
 	if SSDBM == nil {
 		SSDBM = SSDBInit(ip,port,100)
+		SSDBM.Recycle()
 	}
+	SSDBM.mu.Lock()
 	for i,v := range SSDBM.connect_pool {
 		if v.reuse && !v.close_flag {
 			v.mu.Lock()
@@ -51,8 +102,11 @@ func Connect(ip string, port int) (*Client, error) {
 			SSDBM.connect_pool = append(SSDBM.connect_pool[:i], SSDBM.connect_pool[i+1:]...)
 		}
 	}
-	
-	client,_ := connect(SSDBM.ip,SSDBM.port)
+	SSDBM.mu.Unlock()
+	client,err := connect(SSDBM.ip,SSDBM.port)
+	if err != nil {
+		return nil,err
+	}
 	if client != nil {
 		SSDBM.connect_pool = append(SSDBM.connect_pool,client)
 		client.id = time.Now().UnixNano()
@@ -71,6 +125,7 @@ func connect(ip string, port int) (*Client, error) {
 		return nil, err
 	}
 	var c Client
+	c.last_time = time.Now().Unix()
 	c.sock = sock
 	c.mu = &sync.Mutex{}
 	c.reuse = true
@@ -93,6 +148,7 @@ func (c *Client) Do(args ...interface{}) ([]string, error) {
 
 
 func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) {
+    c.last_time = time.Now().Unix()
     args = append(args,nil)
     // Use copy to move the upper part of the slice out of the way and open a hole.
     copy(args[1:], args[0:])
@@ -101,9 +157,10 @@ func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) 
     c.mu.Lock()
 	defer c.mu.Unlock()
 	c.reuse = false
+	c.count++
 	err := c.send(args)
 	if err != nil {
-		fmt.Println("processCmd send error:",err,args)
+		//fmt.Println("processCmd send error:",err)
 		if err == io.EOF {
 			c.close_flag = true
 		}
@@ -112,10 +169,11 @@ func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) 
 	}
 	resp, err := c.recv()
 	if err != nil {
-		fmt.Println("processCmd error:",err,args)
+		//fmt.Println("processCmd error:",err)
 		c.reuse = false
 		return nil, err
 	}
+	c.success++
 	c.reuse = true
 	if len(resp) == 2 && resp[0] == "ok" {
 		switch cmd {
@@ -137,7 +195,7 @@ func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) 
 		return nil, nil
 	} else {
 		if resp[0] == "ok" {
-			fmt.Println("Process:",args,resp)
+			//fmt.Println("Process:",args,resp)
 			switch cmd {
 				case "hgetall","hscan","hrscan","multi_hget","scan","rscan":
 					list := make(map[string]interface{})
