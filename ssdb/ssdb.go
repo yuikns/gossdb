@@ -368,7 +368,13 @@ func (c *Client) HashMultiGet(hash string,keys []string) (map[string]interface{}
 	for _,v := range keys {
 		params = append(params, v)
 	}
-	return c.ProcessCmd("multi_hget",params)
+	val,err := c.ProcessCmd("multi_hget",params)
+	if err != nil {
+		return nil,err
+	} else {
+		return val.(map[string]interface{}),err
+	}
+	return nil,nil
 }
 
 func (c *Client) HashMultiDel(hash string,keys []string) (interface{}, error) {
