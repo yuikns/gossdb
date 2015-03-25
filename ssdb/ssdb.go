@@ -206,7 +206,7 @@ func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) 
 					}
 					return list,nil
 				default:
-				return resp[1:],nil
+					return resp[1:],nil
 			}
 		}
 		
