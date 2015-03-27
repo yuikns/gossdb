@@ -89,10 +89,10 @@ func (db *SSDB) Info() {
 func Connect(ip string, port int) (*Client, error) {
 	if SSDBM == nil {
 		SSDBM = SSDBInit(ip,port,100)
-		SSDBM.Recycle()
+		//SSDBM.Recycle()
 	}
 	fmt.Println("new connection")
-	/*SSDBM.mu.Lock()
+	SSDBM.mu.Lock()
 	for i,v := range SSDBM.connect_pool {
 		if v.reuse && !v.close_flag {
 			v.mu.Lock()
@@ -103,13 +103,13 @@ func Connect(ip string, port int) (*Client, error) {
 			SSDBM.connect_pool = append(SSDBM.connect_pool[:i], SSDBM.connect_pool[i+1:]...)
 		}
 	}
-	SSDBM.mu.Unlock()*/
+	SSDBM.mu.Unlock()
 	client,err := connect(SSDBM.ip,SSDBM.port)
 	if err != nil {
 		return nil,err
 	}
 	if client != nil {
-		//SSDBM.connect_pool = append(SSDBM.connect_pool,client)
+		SSDBM.connect_pool = append(SSDBM.connect_pool,client)
 		client.id = time.Now().UnixNano()
 		return client,nil
 	}
