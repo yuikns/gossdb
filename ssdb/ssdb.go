@@ -15,7 +15,7 @@ type Client struct {
 	recv_buf bytes.Buffer
 	reuse	bool
 	id int64
-	close_flag bool
+	connected bool
 	last_time int64
 	success int64
 	count int64
@@ -44,7 +44,7 @@ func (db *SSDB) Recycle() {
 			remove_count := 0
 			for i := len(db.connect_pool)-1;i >= 0;i-- {
 				v := db.connect_pool[i]
-				if v.close_flag || now - v.last_time > int64(db.timeout) {
+				if !v.connected || now - v.last_time > int64(db.timeout) {
 					v.Close()
 					remove_count++
 					if len(db.connect_pool) > 1 {
@@ -55,7 +55,6 @@ func (db *SSDB) Recycle() {
 				}
 			}
 			db.mu.Unlock()
-			fmt.Println("remove_count:",remove_count)
 			time.Sleep(10 * time.Second)
 		}
 	}()
@@ -73,7 +72,7 @@ func (db *SSDB) Info() {
 			use++
 		}
 		
-		if v.close_flag {
+		if !v.connected {
 			close_count++
 		}
 		count += v.count
@@ -91,15 +90,15 @@ func Connect(ip string, port int) (*Client, error) {
 		SSDBM = SSDBInit(ip,port,100)
 		//SSDBM.Recycle()
 	}
-	fmt.Println("new connection")
+	fmt.Println("Connect to ",ip,":",port)
 	SSDBM.mu.Lock()
 	for i,v := range SSDBM.connect_pool {
-		if v.reuse && !v.close_flag {
+		if v.reuse && v.connected {
 			v.mu.Lock()
 			v.reuse = true
 			v.mu.Unlock()
 			return v,nil
-		} else if v.close_flag {
+		} else if !v.connected {
 			SSDBM.connect_pool = append(SSDBM.connect_pool[:i], SSDBM.connect_pool[i+1:]...)
 		}
 	}
@@ -130,7 +129,7 @@ func connect(ip string, port int) (*Client, error) {
 	c.sock = sock
 	c.mu = &sync.Mutex{}
 	c.reuse = true
-	c.close_flag = false
+	c.connected = true
 	return &c, nil
 }
 
@@ -163,7 +162,7 @@ func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) 
 	if err != nil {
 		//fmt.Println("processCmd send error:",err)
 		if err == io.EOF {
-			c.close_flag = true
+			c.connected = false
 		}
 		c.reuse = false
 		return nil, err
@@ -174,6 +173,7 @@ func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) 
 		c.reuse = false
 		return nil, err
 	}
+	//fmt.Println("Process:",args,resp)
 	c.success++
 	c.reuse = true
 	if len(resp) == 2 && resp[0] == "ok" {
@@ -315,7 +315,7 @@ func (c *Client) HashList(start string,end string,limit int) (interface{}, error
 	return c.ProcessCmd("hlist",params)
 }
 
-func (c *Client) HashKeys(hash string,start string,end string,limit int) (interface{}, error) {
+func (c *Client) HashKeys(hash string,start string,end string,limit int64) (interface{}, error) {
 	params := []interface{}{hash,start,end,limit}
 	return c.ProcessCmd("hkeys",params)
 }
@@ -504,7 +504,7 @@ func (c *Client) parse() []string {
 
 // Close The Client Connection
 func (c *Client) Close() error {
-	c.close_flag = true
+	c.connected = false
 	c.reuse = false
 	return c.sock.Close()
 }
