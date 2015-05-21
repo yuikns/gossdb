@@ -8,6 +8,7 @@ import (
 	"sync"
 	"io"
 	"time"
+	"log"
 )
 
 type Client struct {
@@ -90,7 +91,6 @@ func Connect(ip string, port int) (*Client, error) {
 		SSDBM = SSDBInit(ip,port,100)
 		//SSDBM.Recycle()
 	}
-	fmt.Println("Connect to ",ip,":",port)
 	SSDBM.mu.Lock()
 	for i,v := range SSDBM.connect_pool {
 		if v.reuse && v.connected {
@@ -116,21 +116,40 @@ func Connect(ip string, port int) (*Client, error) {
 }
 
 func connect(ip string, port int) (*Client, error) {
-	addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", ip, port))
+	var c Client
+	c.mu = &sync.Mutex{}
+	c.Connect()
+	return &c, nil
+}
+
+func (cl *Client) Connect() {
+	addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", SSDBM.ip, SSDBM.port))
 	if err != nil {
-		return nil, err
+		log.Println("Client ResolveTCPAddr failed:",err)
+		return
 	}
 	sock, err := net.DialTCP("tcp", nil, addr)
 	if err != nil {
-		return nil, err
+		log.Println("Client dial failed:",err)
+		return
 	}
-	var c Client
-	c.last_time = time.Now().Unix()
-	c.sock = sock
-	c.mu = &sync.Mutex{}
-	c.reuse = true
-	c.connected = true
-	return &c, nil
+	cl.last_time = time.Now().Unix()
+	cl.sock = sock
+	cl.reuse = true
+	cl.connected = true
+	log.Println("Client connected to ",SSDBM.ip, SSDBM.port)
+}
+
+func (cl *Client) RetryConnect() {
+	log.Println("Client retry connect to ",SSDBM.ip, SSDBM.port)
+	for {
+		if !cl.connected {
+			cl.Connect()
+			time.Sleep(10 * time.Second)
+		} else {
+			break
+		}
+	}
 }
 
 func (c *Client) Do(args ...interface{}) ([]string, error) {
@@ -148,72 +167,79 @@ func (c *Client) Do(args ...interface{}) ([]string, error) {
 
 
 func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) {
-    c.last_time = time.Now().Unix()
-    args = append(args,nil)
-    // Use copy to move the upper part of the slice out of the way and open a hole.
-    copy(args[1:], args[0:])
-    // Store the cmd to args
-    args[0] = cmd
-    c.mu.Lock()
-	defer c.mu.Unlock()
-	c.reuse = false
-	c.count++
-	err := c.send(args)
-	if err != nil {
-		//fmt.Println("processCmd send error:",err)
-		if err == io.EOF {
-			c.connected = false
-		}
+	if c.connected {
+	    c.last_time = time.Now().Unix()
+	    args = append(args,nil)
+	    // Use copy to move the upper part of the slice out of the way and open a hole.
+	    copy(args[1:], args[0:])
+	    // Store the cmd to args
+	    args[0] = cmd
+	    c.mu.Lock()
+		defer c.mu.Unlock()
 		c.reuse = false
-		return nil, err
-	}
-	resp, err := c.recv()
-	if err != nil {
-		//fmt.Println("processCmd error:",err)
-		c.reuse = false
-		return nil, err
-	}
-	//fmt.Println("Process:",args,resp)
-	c.success++
-	c.reuse = true
-	if len(resp) == 2 && resp[0] == "ok" {
-		switch cmd {
-			case "set","del":
-				return true, nil
-			case "expire","setnx","auth","exists","hexists":
-				if resp[1] == "1" {
-				 return true,nil
-				}	
-				return false,nil
-			case "hsize":
-				val,err := strconv.ParseInt(resp[1],10,64)
-				return val,err
-			default:
-				return resp[1], nil
-		}
-		
-	}else if resp[0] == "not_found" {
-		return nil, nil
-	} else {
-		if resp[0] == "ok" {
-			//fmt.Println("Process:",args,resp)
-			switch cmd {
-				case "hgetall","hscan","hrscan","multi_hget","scan","rscan":
-					list := make(map[string]interface{})
-					length := len(resp[1:])
-					data := resp[1:]
-					for i := 0; i < length; i += 2 {
-						list[data[i]] = data[i+1]
-					}
-					return list,nil
-				default:
-					return resp[1:],nil
+		c.count++
+		err := c.send(args)
+		if err != nil {
+			fmt.Println("SSDB ProcessCmd send error:",err)
+			if err == io.EOF {
+				c.Close()
+				go c.RetryConnect()
 			}
+			return nil, err
+		}
+		resp, err := c.recv()
+		if err != nil {
+			fmt.Println("SSDB ProcessCmd receive error:",err)
+			if err == io.EOF {
+				c.Close()
+				go c.RetryConnect()
+			}
+			return nil, err
+		}
+		//fmt.Println("Process:",args,resp)
+		c.success++
+		c.reuse = true
+		if len(resp) == 2 && resp[0] == "ok" {
+			switch cmd {
+				case "set","del":
+					return true, nil
+				case "expire","setnx","auth","exists","hexists":
+					if resp[1] == "1" {
+					 return true,nil
+					}	
+					return false,nil
+				case "hsize":
+					val,err := strconv.ParseInt(resp[1],10,64)
+					return val,err
+				default:
+					return resp[1], nil
+			}
+			
+		}else if resp[0] == "not_found" {
+			return nil, nil
+		} else {
+			if resp[0] == "ok" {
+				//fmt.Println("Process:",args,resp)
+				switch cmd {
+					case "hgetall","hscan","hrscan","multi_hget","scan","rscan":
+						list := make(map[string]interface{})
+						length := len(resp[1:])
+						data := resp[1:]
+						for i := 0; i < length; i += 2 {
+							list[data[i]] = data[i+1]
+						}
+						return list,nil
+					default:
+						return resp[1:],nil
+				}
+			}
+			
 		}
 		
+		return nil, fmt.Errorf("bad response")
+	} else {
+		return nil, fmt.Errorf("lost connection")
 	}
-	
-	return nil, fmt.Errorf("bad response")
 }
 
 func (c *Client) Auth(pwd string) (interface{}, error) {
