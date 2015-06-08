@@ -8,6 +8,7 @@ import (
 	"sync"
 	"io"
 	"time"
+	"math"
 	"log"
 )
 
@@ -341,12 +342,12 @@ func (c *Client) HashList(start string,end string,limit int) (interface{}, error
 	return c.ProcessCmd("hlist",params)
 }
 
-func (c *Client) HashKeys(hash string,start string,end string,limit int64) (interface{}, error) {
+func (c *Client) HashKeys(hash string,start string,end string,limit int) (interface{}, error) {
 	params := []interface{}{hash,start,end,limit}
 	return c.ProcessCmd("hkeys",params)
 }
 
-func (c *Client) HashGetAll(hash string) (map[string]interface{}, error) {
+func (c *Client) HashGetAllLite(hash string) (map[string]interface{}, error) {
 	params := []interface{}{hash}
 	val,err := c.ProcessCmd("hgetall",params)
 	if err != nil {
@@ -356,6 +357,55 @@ func (c *Client) HashGetAll(hash string) (map[string]interface{}, error) {
 	}
 	
 	return nil,nil
+}
+
+func (c *Client) HashGetAll(hash string) (map[string]interface{}, error) {
+	size,err := c.HashSize(hash)
+	if err != nil {
+		return nil,err
+	}
+	//log.Printf("DB Hash Size:%d\n",size)
+	hashSize := size.(int64)
+	page_range := 20
+	splitSize := math.Ceil(float64(hashSize)/float64(page_range))
+	//log.Printf("DB Hash Size:%d hashSize:%d splitSize:%f\n",size,hashSize,splitSize)
+	var range_keys []string
+	GetResult := make(map[string]interface{})
+	for i := 1;i <= int(splitSize);i++ {
+		start := ""
+		end := ""
+		if len(range_keys) != 0 {
+			start = range_keys[len(range_keys)-1]
+			end = ""
+		}
+		
+		val, err := c.HashKeys(hash,start,end,page_range) 
+		if err != nil {
+			log.Println("HashGetAll Error:",err)
+			continue
+		} 
+		if val == nil {
+			continue
+		}
+		
+		data := val.([]string)
+		range_keys = data
+		if len(data) > 0 {
+			result, err := c.HashMultiGet(hash,data)
+			if err != nil {	
+				log.Println("HashGetAll Error:",err)
+			} 
+			if result == nil {
+				continue
+			}
+			for k,v := range result {
+				GetResult[k] = v
+			}	
+		}
+		
+	}
+
+	return GetResult,nil
 }
 
 func (c *Client) HashScan(hash string,start string,end string,limit int) (map[string]interface{}, error) {
