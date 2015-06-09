@@ -9,6 +9,7 @@ import (
 	"io"
 	"time"
 	"math"
+	"reflect"
 	"log"
 )
 
@@ -387,8 +388,13 @@ func (c *Client) HashGetAll(hash string) (map[string]interface{}, error) {
 		if val == nil {
 			continue
 		}
-		
-		data := val.([]string)
+		log.Println("HashGetAll type:",reflect.TypeOf(val))
+		var data []string
+		if(fmt.Sprintf("%v",reflect.TypeOf(val)) == "string"){
+			data = append(data,val.(string))
+		}else{
+			data = val.([]string)
+		}
 		range_keys = data
 		if len(data) > 0 {
 			result, err := c.HashMultiGet(hash,data)
