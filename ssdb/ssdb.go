@@ -388,7 +388,7 @@ func (c *Client) HashGetAll(hash string) (map[string]interface{}, error) {
 		if val == nil {
 			continue
 		}
-		log.Println("HashGetAll type:",reflect.TypeOf(val))
+		//log.Println("HashGetAll type:",reflect.TypeOf(val))
 		var data []string
 		if(fmt.Sprintf("%v",reflect.TypeOf(val)) == "string"){
 			data = append(data,val.(string))
