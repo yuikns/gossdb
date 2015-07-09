@@ -182,7 +182,7 @@ func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) 
 		c.count++
 		err := c.send(args)
 		if err != nil {
-			//fmt.Println("SSDB ProcessCmd send error:",err)
+			log.Println("SSDB Client ProcessCmd send error:",err)
 			if err == io.EOF {
 				c.Close()
 				go c.RetryConnect()
@@ -191,7 +191,7 @@ func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) 
 		}
 		resp, err := c.recv()
 		if err != nil {
-			//fmt.Println("SSDB ProcessCmd receive error:",err)
+			log.Println("SSDB Client ProcessCmd receive error:",err)
 			if err == io.EOF {
 				c.Close()
 				go c.RetryConnect()
