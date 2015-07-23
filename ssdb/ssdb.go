@@ -18,6 +18,8 @@ type Client struct {
 	recv_buf bytes.Buffer
 	reuse	bool
 	id int64
+	Ip string
+	Port int
 	connected bool
 	last_time int64
 	success int64
@@ -93,7 +95,7 @@ func Connect(ip string, port int) (*Client, error) {
 		SSDBM = SSDBInit(ip,port,100)
 		//SSDBM.Recycle()
 	}
-	SSDBM.mu.Lock()
+	/*SSDBM.mu.Lock()
 	for i,v := range SSDBM.connect_pool {
 		if v.reuse && v.connected {
 			v.mu.Lock()
@@ -104,10 +106,11 @@ func Connect(ip string, port int) (*Client, error) {
 			SSDBM.connect_pool = append(SSDBM.connect_pool[:i], SSDBM.connect_pool[i+1:]...)
 		}
 	}
-	SSDBM.mu.Unlock()
-	client,err := connect(SSDBM.ip,SSDBM.port)
+	SSDBM.mu.Unlock()*/
+	client,err := connect(ip,port)
 	if err != nil {
-		return nil,err
+		go client.RetryConnect()
+		return client,err
 	}
 	if client != nil {
 		SSDBM.connect_pool = append(SSDBM.connect_pool,client)
@@ -119,13 +122,15 @@ func Connect(ip string, port int) (*Client, error) {
 
 func connect(ip string, port int) (*Client, error) {
 	var c Client
+	c.Ip = ip
+	c.Port = port
 	c.mu = &sync.Mutex{}
 	c.Connect()
 	return &c, nil
 }
 
-func (cl *Client) Connect() {
-	addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", SSDBM.ip, SSDBM.port))
+func (c *Client) Connect() {
+	addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", c.Ip, c.Port))
 	if err != nil {
 		log.Println("Client ResolveTCPAddr failed:",err)
 		return
@@ -135,15 +140,15 @@ func (cl *Client) Connect() {
 		log.Println("Client dial failed:",err)
 		return
 	}
-	cl.last_time = time.Now().Unix()
-	cl.sock = sock
-	cl.reuse = true
-	cl.connected = true
-	log.Println("Client connected to ",SSDBM.ip, SSDBM.port)
+	c.last_time = time.Now().Unix()
+	c.sock = sock
+	c.reuse = true
+	c.connected = true
+	log.Println("Client connected to ",c.Ip, c.Port)
 }
 
 func (cl *Client) RetryConnect() {
-	log.Println("Client retry connect to ",SSDBM.ip, SSDBM.port)
+	log.Println("Client retry connect to ",cl.Ip, cl.Port)
 	for {
 		if !cl.connected {
 			cl.Connect()
