@@ -125,26 +125,27 @@ func connect(ip string, port int) (*Client, error) {
 	c.Ip = ip
 	c.Port = port
 	c.mu = &sync.Mutex{}
-	c.Connect()
-	return &c, nil
+	err := c.Connect()
+	return &c, err
 }
 
-func (c *Client) Connect() {
+func (c *Client) Connect() error {
 	addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", c.Ip, c.Port))
 	if err != nil {
 		log.Println("Client ResolveTCPAddr failed:",err)
-		return
+		return err
 	}
 	sock, err := net.DialTCP("tcp", nil, addr)
 	if err != nil {
 		log.Println("Client dial failed:",err)
-		return
+		return err
 	}
 	c.last_time = time.Now().Unix()
 	c.sock = sock
 	c.reuse = true
 	c.connected = true
 	log.Println("Client connected to ",c.Ip, c.Port)
+	return nil
 }
 
 func (cl *Client) RetryConnect() {
