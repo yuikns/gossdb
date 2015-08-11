@@ -168,16 +168,32 @@ func (cl *Client) RetryConnect() {
 }
 
 func (c *Client) Do(args ...interface{}) ([]string, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.reuse = false
-	err := c.send(args)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := c.recv()
-	c.reuse = true
-	return resp, err
+	 c.mu.Lock()
+     defer c.mu.Unlock()
+     c.reuse = false
+     c.count++
+     err := c.send(args)
+     if err != nil {
+         log.Println("SSDB Client Do send error:",err)
+         if err == io.EOF || strings.Contains(err.Error(), "connection reset by peer"){
+             c.Close()
+             go c.RetryConnect()
+         }
+
+         return nil, err
+     }
+     resp, err := c.recv()
+     if err != nil {
+           log.Println("SSDB Client Do recv error:",err)
+           if err == io.EOF || strings.Contains(err.Error(), "connection reset by peer"){
+              c.Close()
+              go c.RetryConnect()
+           }
+	      return nil, err
+     }
+     c.success++
+     c.reuse = true
+     return resp, err
 }
 
 
