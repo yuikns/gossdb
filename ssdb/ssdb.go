@@ -10,6 +10,7 @@ import (
 	"time"
 	"math"
 	"reflect"
+	"syscall"
 	"log"
 )
 
@@ -20,6 +21,7 @@ type Client struct {
 	id int64
 	Ip string
 	Port int
+	Password string
 	connected bool
 	last_time int64
 	success int64
@@ -90,7 +92,7 @@ func (db *SSDB) Info() {
 	
 }
 
-func Connect(ip string, port int) (*Client, error) {
+func Connect(ip string, port int, auth string) (*Client, error) {
 	if SSDBM == nil {
 		SSDBM = SSDBInit(ip,port,100)
 		//SSDBM.Recycle()
@@ -107,7 +109,7 @@ func Connect(ip string, port int) (*Client, error) {
 		}
 	}
 	SSDBM.mu.Unlock()*/
-	client,err := connect(ip,port)
+	client,err := connect(ip,port,auth)
 	if err != nil {
 		go client.RetryConnect()
 		return client,err
@@ -120,10 +122,11 @@ func Connect(ip string, port int) (*Client, error) {
 	return nil,nil
 }
 
-func connect(ip string, port int) (*Client, error) {
+func connect(ip string, port int,auth string) (*Client, error) {
 	var c Client
 	c.Ip = ip
 	c.Port = port
+	c.Password = auth
 	c.mu = &sync.Mutex{}
 	err := c.Connect()
 	return &c, err
@@ -144,6 +147,9 @@ func (c *Client) Connect() error {
 	c.sock = sock
 	c.reuse = true
 	c.connected = true
+	if c.Password != "" {
+    	c.Auth(c.Password)
+    }
 	log.Println("Client connected to ",c.Ip, c.Port)
 	return nil
 }
@@ -188,8 +194,11 @@ func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) 
 		c.count++
 		err := c.send(args)
 		if err != nil {
-			log.Println("SSDB Client ProcessCmd send error:",err)
-			if err == io.EOF {
+			neterror := reflect.TypeOf(err)
+			
+			log.Println("SSDB Client ProcessCmd send error:",err,neterror)
+			
+			if err == io.EOF|| err == syscall.EPIPE {
 				c.Close()
 				go c.RetryConnect()
 			}
@@ -198,7 +207,7 @@ func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) 
 		resp, err := c.recv()
 		if err != nil {
 			log.Println("SSDB Client ProcessCmd receive error:",err)
-			if err == io.EOF {
+			if err == io.EOF || err == syscall.EPIPE {
 				c.Close()
 				go c.RetryConnect()
 			}
