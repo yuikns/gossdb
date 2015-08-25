@@ -175,7 +175,7 @@ func (c *Client) Do(args ...interface{}) ([]string, error) {
      err := c.send(args)
      if err != nil {
          log.Println("SSDB Client Do send error:",err)
-         if err == io.EOF || strings.Contains(err.Error(), "connection reset by peer"){
+         if err == io.EOF || strings.Contains(err.Error(), "connection"){
              c.Close()
              go c.RetryConnect()
          }
@@ -185,7 +185,7 @@ func (c *Client) Do(args ...interface{}) ([]string, error) {
      resp, err := c.recv()
      if err != nil {
            log.Println("SSDB Client Do recv error:",err)
-           if err == io.EOF || strings.Contains(err.Error(), "connection reset by peer"){
+           if err == io.EOF || strings.Contains(err.Error(), "connection"){
               c.Close()
               go c.RetryConnect()
            }
@@ -213,7 +213,7 @@ func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) 
 		if err != nil {
 			log.Println("SSDB Client ProcessCmd send error:",err)
 			
-			if err == io.EOF|| err == syscall.EPIPE || strings.Contains(err.Error(), "connection reset by peer") {
+			if err == io.EOF|| err == syscall.EPIPE || strings.Contains(err.Error(), "connection") {
 				c.Close()
 				go c.RetryConnect()
 			}
@@ -222,7 +222,7 @@ func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) 
 		resp, err := c.recv()
 		if err != nil {
 			log.Println("SSDB Client ProcessCmd receive error:",err)
-			if err == io.EOF|| err == syscall.EPIPE || strings.Contains(err.Error(), "connection reset by peer") {
+			if err == io.EOF|| err == syscall.EPIPE || strings.Contains(err.Error(), "connection") {
 				c.Close()
 				go c.RetryConnect()
 			}
