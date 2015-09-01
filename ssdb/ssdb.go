@@ -467,7 +467,7 @@ func (c *Client) HashRScan(hash string,start string,end string,limit int) (map[s
 	return nil,nil
 }
 
-func (c *Client) HashMultiSet(hash string,data map[string]interface{}) (interface{}, error) {
+func (c *Client) HashMultiSet(hash string,data map[string]string) (interface{}, error) {
 	params := []interface{}{hash}
 	for k,v := range data {
 		params = append(params,k)
