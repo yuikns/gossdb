@@ -151,7 +151,7 @@ func (c *Client) Connect() error {
 	if c.Password != "" {
     	c.Auth(c.Password)
     }
-	log.Println("Client connected to ",c.Ip, c.Port)
+	//log.Println("Client connected to ",c.Ip, c.Port)
 	return nil
 }
 
@@ -228,7 +228,7 @@ func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) 
 			}
 			return nil, err
 		}
-		//fmt.Println("Process:",args,resp)
+		//log.Println("Process:",args,resp)
 		c.success++
 		c.reuse = true
 		if len(resp) == 2 && resp[0] == "ok" {
@@ -265,10 +265,9 @@ func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) 
 						return resp[1:],nil
 				}
 			}
-			
 		}
 		
-		return nil, fmt.Errorf("bad response")
+		return nil, fmt.Errorf("bad response:%v",resp)
 	} else {
 		return nil, fmt.Errorf("lost connection")
 	}
