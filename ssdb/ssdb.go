@@ -193,6 +193,12 @@ func (c *Client) Do(args ...interface{}) ([]string, error) {
      }
      c.success++
      c.reuse = true
+     /*if resp[0] == "error" {
+     	err = fmt.Errorf("bad response:%v",resp[1])
+     }*/
+     if err != nil {
+     	return nil,err
+     }
      return resp, err
 }
 
