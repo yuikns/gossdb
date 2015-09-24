@@ -167,6 +167,13 @@ func (cl *Client) RetryConnect() {
 	}
 }
 
+func (c *Client) CheckError(err error) {
+	 if err == io.EOF || strings.Contains(err.Error(), "connection") || strings.Contains(err.Error(), "timed out" ) || strings.Contains(err.Error(), "route" ) {
+         c.Close()
+         go c.RetryConnect()
+     }
+}
+
 func (c *Client) Do(args ...interface{}) ([]string, error) {
 	 c.mu.Lock()
      defer c.mu.Unlock()
@@ -175,20 +182,13 @@ func (c *Client) Do(args ...interface{}) ([]string, error) {
      err := c.send(args)
      if err != nil {
          log.Println("SSDB Client Do send error:",err)
-         if err == io.EOF || strings.Contains(err.Error(), "connection") || strings.Contains(err.Error(), "timed out" ) {
-             c.Close()
-             go c.RetryConnect()
-         }
-
+         c.CheckError(err)
          return nil, err
      }
      resp, err := c.recv()
      if err != nil {
            log.Println("SSDB Client Do recv error:",err)
-           if err == io.EOF || strings.Contains(err.Error(), "connection") || strings.Contains(err.Error(), "timed out" ) {
-              c.Close()
-              go c.RetryConnect()
-           }
+           c.CheckError(err)
 	      return nil, err
      }
      c.success++
@@ -218,20 +218,13 @@ func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) 
 		err := c.send(args)
 		if err != nil {
 			log.Println("SSDB Client ProcessCmd send error:",err)
-			
-			if err == io.EOF|| err == syscall.EPIPE || strings.Contains(err.Error(), "connection") || strings.Contains(err.Error(), "timed out" ) {
-				c.Close()
-				go c.RetryConnect()
-			}
+			c.CheckError(err)
 			return nil, err
 		}
 		resp, err := c.recv()
 		if err != nil {
 			log.Println("SSDB Client ProcessCmd receive error:",err)
-			if err == io.EOF|| err == syscall.EPIPE || strings.Contains(err.Error(), "connection") || strings.Contains(err.Error(), "timed out" ) {
-				c.Close()
-				go c.RetryConnect()
-			}
+			c.CheckError(err)
 			return nil, err
 		}
 		//log.Println("Process:",args,resp)
