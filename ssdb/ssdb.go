@@ -10,7 +10,7 @@ import (
 	"time"
 	"math"
 	"reflect"
-	"syscall"
+	_"syscall"
 	"strings"
 	"log"
 )
@@ -374,6 +374,49 @@ func (c *Client) HashList(start string,end string,limit int) (interface{}, error
 func (c *Client) HashKeys(hash string,start string,end string,limit int) (interface{}, error) {
 	params := []interface{}{hash,start,end,limit}
 	return c.ProcessCmd("hkeys",params)
+}
+func (c *Client) HashKeysAll(hash string) ([]string, error) {
+	size,err := c.HashSize(hash)
+	if err != nil {
+		return nil,err
+	}
+	log.Printf("DB Hash Size:%d\n",size)
+	hashSize := size.(int64)
+	page_range := 15
+	splitSize := math.Ceil(float64(hashSize)/float64(page_range))
+	log.Printf("DB Hash Size:%d hashSize:%d splitSize:%f\n",size,hashSize,splitSize)
+	var range_keys []string
+	for i := 1;i <= int(splitSize);i++ {
+		start := ""
+		end := ""
+		if len(range_keys) != 0 {
+			start = range_keys[len(range_keys)-1]
+			end = ""
+		}
+		
+		val, err := c.HashKeys(hash,start,end,page_range) 
+		if err != nil {
+			log.Println("HashGetAll Error:",err)
+			continue
+		} 
+		if val == nil {
+			continue
+		}
+		//log.Println("HashGetAll type:",reflect.TypeOf(val))
+		var data []string
+		if(fmt.Sprintf("%v",reflect.TypeOf(val)) == "string"){
+			data = append(data,val.(string))
+		}else{
+			data = val.([]string)
+		}
+		
+		if len(data) > 0 {
+			range_keys = append(range_keys,data...)
+		}
+		
+	}
+	log.Printf("DB Hash Keys Size:%d\n",len(range_keys))
+	return range_keys,nil
 }
 
 func (c *Client) HashGetAllLite(hash string) (map[string]interface{}, error) {
