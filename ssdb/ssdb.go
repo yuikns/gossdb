@@ -39,8 +39,10 @@ type SSDB struct {
 	timeout int
 }
 var SSDBM *SSDB
+var version string = "0.1.0"
 const layout = "2006-01-06 15:04:05"
 func SSDBInit(ip string, port int,max_connect int) *SSDB {
+	log.Println("SSDB Client Version:",version)
 	return &SSDB{max_connect:max_connect,ip:ip,port:port,timeout:30,mu:&sync.Mutex{}}
 }
 
