@@ -3,8 +3,8 @@ package main
 import (
     "flag"
     "fmt"
-    "github.com/matishsiao/gossdb/ssdb"
-    "os"
+    _"github.com/matishsiao/gossdb/ssdb"
+    _"os"
     "time"
     
 )
