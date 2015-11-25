@@ -15,8 +15,8 @@ import (
 	"log"
 )
 
-type Client struct {
-	sock *net.TCPConn
+type UnixClient struct {
+	sock *net.UnixConn
 	recv_buf bytes.Buffer
 	reuse	bool
 	id int64
@@ -30,23 +30,22 @@ type Client struct {
 	mu	*sync.Mutex
 }
 
-type SSDB struct {
+type SSDBUnix struct {
 	mu *sync.Mutex
-	connect_pool []*Client
+	connect_pool []*UnixClient
 	max_connect int
 	ip string
 	port int
 	timeout int
 }
-var SSDBM *SSDB
-var version string = "0.1.0"
-const layout = "2006-01-06 15:04:05"
-func SSDBInit(ip string, port int,max_connect int) *SSDB {
-	log.Println("SSDB Client Version:",version)
-	return &SSDB{max_connect:max_connect,ip:ip,port:port,timeout:30,mu:&sync.Mutex{}}
+var SSDBUnixM *SSDBUnix
+var unixVersion string = "0.1.1"
+func SSDBUnixInit(ip string, port int,max_connect int) *SSDBUnix {
+	log.Println("SSDBUnix Client Version:",unixVersion)
+	return &SSDBUnix{max_connect:max_connect,ip:ip,port:port,timeout:30,mu:&sync.Mutex{}}
 }
 
-func (db *SSDB) Recycle() {
+func (db *SSDBUnix) Recycle() {
 	go func() {
 		for {
 			now := time.Now().Unix()
@@ -71,10 +70,10 @@ func (db *SSDB) Recycle() {
 }
 
 
-func (db *SSDB) Info() {
+func (db *SSDBUnix) Info() {
 	var use,nouse int
 	var count,success,close_count int64
-	for _,v := range SSDBM.connect_pool {
+	for _,v := range SSDBUnixM.connect_pool {
 		//fmt.Printf("[%d][status]:%v\n",k,v.reuse)
 		if v.reuse {
 			nouse++
@@ -91,42 +90,42 @@ func (db *SSDB) Info() {
 	failed := count - success
 	
 	now_time:=time.Now().Format(layout)
-	fmt.Printf("[%s] SSDBM Info[IP]:%v [Port]:%v [Max]:%v [Pool]:%v [Use]:%v [NoUse]:%v [Close]:%v [Total]:%v [Success]:%v [Failed]:%v\n",now_time,db.ip,db.port,db.max_connect,len(SSDBM.connect_pool),use,nouse,close_count,count,success,failed)
+	fmt.Printf("[%s] SSDBUnixM Info[IP]:%v [Port]:%v [Max]:%v [Pool]:%v [Use]:%v [NoUse]:%v [Close]:%v [Total]:%v [Success]:%v [Failed]:%v\n",now_time,db.ip,db.port,db.max_connect,len(SSDBUnixM.connect_pool),use,nouse,close_count,count,success,failed)
 	
 }
 
-func Connect(ip string, port int, auth string) (*Client, error) {
-	if SSDBM == nil {
-		SSDBM = SSDBInit(ip,port,100)
-		//SSDBM.Recycle()
+func UnixConnect(ip string, port int, auth string) (*UnixClient, error) {
+	if SSDBUnixM == nil {
+		SSDBUnixM = SSDBUnixInit(ip,port,100)
+		//SSDBUnixM.Recycle()
 	}
-	/*SSDBM.mu.Lock()
-	for i,v := range SSDBM.connect_pool {
+	/*SSDBUnixM.mu.Lock()
+	for i,v := range SSDBUnixM.connect_pool {
 		if v.reuse && v.connected {
 			v.mu.Lock()
 			v.reuse = true
 			v.mu.Unlock()
 			return v,nil
 		} else if !v.connected {
-			SSDBM.connect_pool = append(SSDBM.connect_pool[:i], SSDBM.connect_pool[i+1:]...)
+			SSDBUnixM.connect_pool = append(SSDBUnixM.connect_pool[:i], SSDBUnixM.connect_pool[i+1:]...)
 		}
 	}
-	SSDBM.mu.Unlock()*/
-	client,err := connect(ip,port,auth)
+	SSDBUnixM.mu.Unlock()*/
+	client,err := Unixconnect(ip,port,auth)
 	if err != nil {
 		go client.RetryConnect()
 		return client,err
 	}
 	if client != nil {
-		SSDBM.connect_pool = append(SSDBM.connect_pool,client)
+		SSDBUnixM.connect_pool = append(SSDBUnixM.connect_pool,client)
 		client.id = time.Now().UnixNano()
 		return client,nil
 	}
 	return nil,nil
 }
 
-func connect(ip string, port int,auth string) (*Client, error) {
-	var c Client
+func Unixconnect(ip string, port int,auth string) (*UnixClient, error) {
+	var c UnixClient
 	c.Ip = ip
 	c.Port = port
 	c.Password = auth
@@ -135,17 +134,15 @@ func connect(ip string, port int,auth string) (*Client, error) {
 	return &c, err
 }
 
-func (c *Client) Connect() error {
-	addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", c.Ip, c.Port))
+func (c *UnixClient) Connect() error {
+	types := "unix" // or "unixgram" or "unixpacket"
+	//laddr := net.UnixAddr{"/tmp/ssdbcli", types}
+	sock, err := net.DialUnix(types, nil,&net.UnixAddr{c.Ip, types})
 	if err != nil {
-		log.Println("Client ResolveTCPAddr failed:",err)
+	    log.Println("Client dial failed:",err)
 		return err
-	}
-	sock, err := net.DialTCP("tcp", nil, addr)
-	if err != nil {
-		log.Println("Client dial failed:",err)
-		return err
-	}
+	}   
+	
 	c.last_time = time.Now().Unix()
 	c.sock = sock
 	c.reuse = true
@@ -157,7 +154,7 @@ func (c *Client) Connect() error {
 	return nil
 }
 
-func (cl *Client) RetryConnect() {
+func (cl *UnixClient) RetryConnect() {
 	log.Println("Client retry connect to ",cl.Ip, cl.Port)
 	for {
 		if !cl.connected {
@@ -169,14 +166,14 @@ func (cl *Client) RetryConnect() {
 	}
 }
 
-func (c *Client) CheckError(err error) {
+func (c *UnixClient) CheckError(err error) {
 	 if err == io.EOF || strings.Contains(err.Error(), "connection") || strings.Contains(err.Error(), "timed out" ) || strings.Contains(err.Error(), "route" ) {
          c.Close()
          go c.RetryConnect()
      }
 }
 
-func (c *Client) Do(args ...interface{}) ([]string, error) {
+func (c *UnixClient) Do(args ...interface{}) ([]string, error) {
 	 c.mu.Lock()
      defer c.mu.Unlock()
      c.reuse = false
@@ -205,7 +202,7 @@ func (c *Client) Do(args ...interface{}) ([]string, error) {
 }
 
 
-func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) {
+func (c *UnixClient) ProcessCmd(cmd string,args []interface{}) (interface{}, error) {
 	if c.connected {
 	    c.last_time = time.Now().Unix()
 	    args = append(args,nil)
@@ -274,110 +271,110 @@ func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) 
 	}
 }
 
-func (c *Client) Auth(pwd string) (interface{}, error) {
+func (c *UnixClient) Auth(pwd string) (interface{}, error) {
 	params := []interface{}{pwd}
 	return c.ProcessCmd("auth",params)
 }
 
-func (c *Client) Set(key string, val string) (interface{}, error) {
+func (c *UnixClient) Set(key string, val string) (interface{}, error) {
 	params := []interface{}{key,val}
 	return c.ProcessCmd("set",params)
 }
 
-func (c *Client) Get(key string) (interface{}, error) {
+func (c *UnixClient) Get(key string) (interface{}, error) {
 	params := []interface{}{key}
 	return c.ProcessCmd("get",params)
 }
 
-func (c *Client) Del(key string) (interface{}, error) {
+func (c *UnixClient) Del(key string) (interface{}, error) {
 	params := []interface{}{key}
 	return c.ProcessCmd("del",params)
 }
 
-func (c *Client) SetX(key string,val string, ttl int) (interface{}, error) {
+func (c *UnixClient) SetX(key string,val string, ttl int) (interface{}, error) {
 	params := []interface{}{key,val,ttl}
 	return c.ProcessCmd("setx",params)
 }
 
-func (c *Client) Scan(start string,end string,limit int) (interface{}, error) {
+func (c *UnixClient) Scan(start string,end string,limit int) (interface{}, error) {
 	params := []interface{}{start,end,limit}
 	return c.ProcessCmd("scan",params)
 }
 
-func (c *Client) Expire(key string,ttl int) (interface{}, error) {
+func (c *UnixClient) Expire(key string,ttl int) (interface{}, error) {
 	params := []interface{}{key,ttl}
 	return c.ProcessCmd("expire",params)
 }
 
-func (c *Client) KeyTTL(key string) (interface{}, error) {
+func (c *UnixClient) KeyTTL(key string) (interface{}, error) {
 	params := []interface{}{key}
 	return c.ProcessCmd("ttl",params)
 }
 
 //set new key if key exists then ignore this operation
-func (c *Client) SetNew(key string,val string) (interface{}, error) {
+func (c *UnixClient) SetNew(key string,val string) (interface{}, error) {
 	params := []interface{}{key,val}
 	return c.ProcessCmd("setnx",params)
 }
 
 //
-func (c *Client) GetSet(key string,val string) (interface{}, error) {
+func (c *UnixClient) GetSet(key string,val string) (interface{}, error) {
 	params := []interface{}{key,val}
 	return c.ProcessCmd("getset",params)
 }
 
 //incr num to exist number value
-func (c *Client) Incr(key string,val int) (interface{}, error) {
+func (c *UnixClient) Incr(key string,val int) (interface{}, error) {
 	params := []interface{}{key,val}
 	return c.ProcessCmd("incr",params)
 }
 
-func (c *Client) Exists(key string) (interface{}, error) {
+func (c *UnixClient) Exists(key string) (interface{}, error) {
 	params := []interface{}{key}
 	return c.ProcessCmd("exists",params)
 }
 
-func (c *Client) HashSet(hash string,key string,val string) (interface{}, error) {
+func (c *UnixClient) HashSet(hash string,key string,val string) (interface{}, error) {
 	params := []interface{}{hash,key,val}
 	return c.ProcessCmd("hset",params)
 }
 
-func (c *Client) HashGet(hash string,key string) (interface{}, error) {
+func (c *UnixClient) HashGet(hash string,key string) (interface{}, error) {
 	params := []interface{}{hash,key}
 	return c.ProcessCmd("hget",params)
 }
 
-func (c *Client) HashDel(hash string,key string) (interface{}, error) {
+func (c *UnixClient) HashDel(hash string,key string) (interface{}, error) {
 	params := []interface{}{hash,key}
 	return c.ProcessCmd("hdel",params)
 }
 
-func (c *Client) HashIncr(hash string,key string,val int) (interface{}, error) {
+func (c *UnixClient) HashIncr(hash string,key string,val int) (interface{}, error) {
 	params := []interface{}{hash,key,val}
 	return c.ProcessCmd("hincr",params)
 }
 
-func (c *Client) HashExists(hash string,key string) (interface{}, error) {
+func (c *UnixClient) HashExists(hash string,key string) (interface{}, error) {
 	params := []interface{}{hash,key}
 	return c.ProcessCmd("hexists",params)
 }
 
-func (c *Client) HashSize(hash string) (interface{}, error) {
+func (c *UnixClient) HashSize(hash string) (interface{}, error) {
 	params := []interface{}{hash}
 	return c.ProcessCmd("hsize",params)
 }
 
 //search from start to end hashmap name or haskmap key name,except start word
-func (c *Client) HashList(start string,end string,limit int) (interface{}, error) {
+func (c *UnixClient) HashList(start string,end string,limit int) (interface{}, error) {
 	params := []interface{}{start,end,limit}
 	return c.ProcessCmd("hlist",params)
 }
 
-func (c *Client) HashKeys(hash string,start string,end string,limit int) (interface{}, error) {
+func (c *UnixClient) HashKeys(hash string,start string,end string,limit int) (interface{}, error) {
 	params := []interface{}{hash,start,end,limit}
 	return c.ProcessCmd("hkeys",params)
 }
-func (c *Client) HashKeysAll(hash string) ([]string, error) {
+func (c *UnixClient) HashKeysAll(hash string) ([]string, error) {
 	size,err := c.HashSize(hash)
 	if err != nil {
 		return nil,err
@@ -421,7 +418,7 @@ func (c *Client) HashKeysAll(hash string) ([]string, error) {
 	return range_keys,nil
 }
 
-func (c *Client) HashGetAllLite(hash string) (map[string]string, error) {
+func (c *UnixClient) HashGetAllLite(hash string) (map[string]string, error) {
 	params := []interface{}{hash}
 	val,err := c.ProcessCmd("hgetall",params)
 	if err != nil {
@@ -433,7 +430,7 @@ func (c *Client) HashGetAllLite(hash string) (map[string]string, error) {
 	return nil,nil
 }
 
-func (c *Client) HashGetAll(hash string) (map[string]interface{}, error) {
+func (c *UnixClient) HashGetAll(hash string) (map[string]interface{}, error) {
 	size,err := c.HashSize(hash)
 	if err != nil {
 		return nil,err
@@ -487,7 +484,7 @@ func (c *Client) HashGetAll(hash string) (map[string]interface{}, error) {
 	return GetResult,nil
 }
 
-func (c *Client) HashScan(hash string,start string,end string,limit int) (map[string]interface{}, error) {
+func (c *UnixClient) HashScan(hash string,start string,end string,limit int) (map[string]interface{}, error) {
 	params := []interface{}{hash,start,end,limit}
 	val,err := c.ProcessCmd("hscan",params)
 	if err != nil {
@@ -499,7 +496,7 @@ func (c *Client) HashScan(hash string,start string,end string,limit int) (map[st
 	return nil,nil
 }
 
-func (c *Client) HashRScan(hash string,start string,end string,limit int) (map[string]interface{}, error) {
+func (c *UnixClient) HashRScan(hash string,start string,end string,limit int) (map[string]interface{}, error) {
 	params := []interface{}{hash,start,end,limit}
 	val,err := c.ProcessCmd("hrscan",params)
 	if err != nil {
@@ -510,7 +507,7 @@ func (c *Client) HashRScan(hash string,start string,end string,limit int) (map[s
 	return nil,nil
 }
 
-func (c *Client) HashMultiSet(hash string,data map[string]string) (interface{}, error) {
+func (c *UnixClient) HashMultiSet(hash string,data map[string]string) (interface{}, error) {
 	params := []interface{}{hash}
 	for k,v := range data {
 		params = append(params,k)
@@ -519,7 +516,7 @@ func (c *Client) HashMultiSet(hash string,data map[string]string) (interface{}, 
 	return c.ProcessCmd("multi_hset",params)
 }
 
-func (c *Client) HashMultiGet(hash string,keys []string) (map[string]interface{}, error) {
+func (c *UnixClient) HashMultiGet(hash string,keys []string) (map[string]interface{}, error) {
 	params := []interface{}{hash}
 	for _,v := range keys {
 		params = append(params, v)
@@ -533,7 +530,7 @@ func (c *Client) HashMultiGet(hash string,keys []string) (map[string]interface{}
 	return nil,nil
 }
 
-func (c *Client) HashMultiDel(hash string,keys []string) (interface{}, error) {
+func (c *UnixClient) HashMultiDel(hash string,keys []string) (interface{}, error) {
 	params := []interface{}{hash}
 	for _,v := range keys {
 		params = append(params, v)
@@ -542,17 +539,17 @@ func (c *Client) HashMultiDel(hash string,keys []string) (interface{}, error) {
 }
 
 
-func (c *Client) HashClear(hash string) (interface{}, error) {
+func (c *UnixClient) HashClear(hash string) (interface{}, error) {
 	params := []interface{}{hash}
 	return c.ProcessCmd("hclear",params)
 }
 
 
-func (c *Client) Send(args ...interface{}) error {
+func (c *UnixClient) Send(args ...interface{}) error {
 	return c.send(args);
 }
 
-func (c *Client) send(args []interface{}) error {
+func (c *UnixClient) send(args []interface{}) error {
 	var buf bytes.Buffer
 	for _, arg := range args {
 		var s string
@@ -596,11 +593,11 @@ func (c *Client) send(args []interface{}) error {
 	return err
 }
 
-func (c *Client) Recv() ([]string, error) {
+func (c *UnixClient) Recv() ([]string, error) {
 	return c.recv();
 }
 
-func (c *Client) recv() ([]string, error) {
+func (c *UnixClient) recv() ([]string, error) {
 	var tmp [1]byte
 	for {
 		resp := c.parse()
@@ -615,7 +612,7 @@ func (c *Client) recv() ([]string, error) {
 	}
 }
 
-func (c *Client) parse() []string {
+func (c *UnixClient) parse() []string {
 	resp := []string{}
 	buf := c.recv_buf.Bytes()
 	var idx, offset int
@@ -658,7 +655,7 @@ func (c *Client) parse() []string {
 
 
 // Close The Client Connection
-func (c *Client) Close() error {
+func (c *UnixClient) Close() error {
 	c.connected = false
 	c.reuse = false
 	return c.sock.Close()

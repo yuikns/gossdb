@@ -43,7 +43,7 @@ func run() {
 
 func benchmark(id int) int64 {
 	//ip := "104.155.206.199";
-    ip := "127.0.0.1"
+   /* ip := "127.0.0.1"
     port := 8888 
     db, err := ssdb.Connect(ip, port);
     if(err != nil){
@@ -121,7 +121,7 @@ func benchmark(id int) int64 {
 	if ssdb.SSDBM != nil {
 	   ssdb.SSDBM.Info()
 	}
-   
+   */
     return 0
 }
 
