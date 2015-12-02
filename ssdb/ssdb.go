@@ -38,8 +38,15 @@ type SSDB struct {
 	port int
 	timeout int
 }
+
+type HashData struct {
+	HashName string
+	Key      string
+	Value    string
+}
+
 var SSDBM *SSDB
-var version string = "0.1.0"
+var version string = "0.1.1"
 const layout = "2006-01-06 15:04:05"
 func SSDBInit(ip string, port int,max_connect int) *SSDB {
 	log.Println("SSDB Client Version:",version)
@@ -341,6 +348,57 @@ func (c *Client) HashSet(hash string,key string,val string) (interface{}, error)
 	params := []interface{}{hash,key,val}
 	return c.ProcessCmd("hset",params)
 }
+
+// ------  added by Dixen for multi connections Hashset function
+
+func conHelper(chunk []HashData, wg *sync.WaitGroup, c *Client, results []interface{}, errs []error) {
+	defer wg.Done()
+	fmt.Printf("go - %v\n", time.Now())
+	for _, v := range chunk {
+		params := []interface{}{v.HashName, v.Key, v.Value}
+		res, err := c.ProcessCmd("hset", params)
+		if err != nil {
+			errs = append(errs, err)
+			break
+		}
+		results = append(results, res)
+	}
+	fmt.Printf("so - %v\n", time.Now())
+}
+
+func (c *Client) MultiHashSet(parts []HashData, connNum int) (interface{}, error) {
+	var privatePool []*Client
+	for i := 0; i < connNum-1; i++ {
+		innerClient, _ := Connect(c.Ip, c.Port, c.Password)
+		privatePool = append(privatePool, innerClient)
+	}
+	privatePool = append(privatePool, c)
+	var results []interface{}
+	var errs []error
+	var wg sync.WaitGroup
+	wg.Add(connNum)
+	p := len(parts) / connNum
+	for i := 1; i <= connNum; i++ {
+		if i == 1 {
+			go conHelper(parts[:p*i], &wg, privatePool[i-1], results, errs)
+		} else if i == connNum {
+			go conHelper(parts[p*(i-1):], &wg, privatePool[i-1], results, errs)
+		} else {
+			go conHelper(parts[p*(i-1):p*i], &wg, privatePool[i-1], results, errs)
+		}
+
+	}
+	wg.Wait()
+	for _, c := range privatePool[:connNum-1] {
+		c.Close()
+	}
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
+	return results, nil
+}
+
+
 
 func (c *Client) HashGet(hash string,key string) (interface{}, error) {
 	params := []interface{}{hash,key}
