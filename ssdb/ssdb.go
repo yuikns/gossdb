@@ -12,31 +12,22 @@ import (
 	"reflect"
 	_"syscall"
 	"strings"
+	"io/ioutil"
+	"encoding/base64"
+	"compress/gzip"
 	"log"
 )
 
 type Client struct {
 	sock *net.TCPConn
 	recv_buf bytes.Buffer
-	reuse	bool
 	id int64
 	Ip string
 	Port int
 	Password string
 	connected bool
-	last_time int64
-	success int64
-	count int64
+	retry bool
 	mu	*sync.Mutex
-}
-
-type SSDB struct {
-	mu *sync.Mutex
-	connect_pool []*Client
-	max_connect int
-	ip string
-	port int
-	timeout int
 }
 
 type HashData struct {
@@ -45,87 +36,17 @@ type HashData struct {
 	Value    string
 }
 
-var SSDBM *SSDB
-var version string = "0.1.1"
+var version string = "0.1.3"
 const layout = "2006-01-06 15:04:05"
-func SSDBInit(ip string, port int,max_connect int) *SSDB {
-	log.Println("SSDB Client Version:",version)
-	return &SSDB{max_connect:max_connect,ip:ip,port:port,timeout:30,mu:&sync.Mutex{}}
-}
 
-func (db *SSDB) Recycle() {
-	go func() {
-		for {
-			now := time.Now().Unix()
-			db.mu.Lock()
-			remove_count := 0
-			for i := len(db.connect_pool)-1;i >= 0;i-- {
-				v := db.connect_pool[i]
-				if !v.connected || now - v.last_time > int64(db.timeout) {
-					v.Close()
-					remove_count++
-					if len(db.connect_pool) > 1 {
-						db.connect_pool = append(db.connect_pool[:i], db.connect_pool[i+1:]...)
-					} else {
-						db.connect_pool = nil
-					}	
-				}
-			}
-			db.mu.Unlock()
-			time.Sleep(10 * time.Second)
-		}
-	}()
-}
-
-
-func (db *SSDB) Info() {
-	var use,nouse int
-	var count,success,close_count int64
-	for _,v := range SSDBM.connect_pool {
-		//fmt.Printf("[%d][status]:%v\n",k,v.reuse)
-		if v.reuse {
-			nouse++
-		} else {
-			use++
-		}
-		
-		if !v.connected {
-			close_count++
-		}
-		count += v.count
-		success += v.success
-	}
-	failed := count - success
-	
-	now_time:=time.Now().Format(layout)
-	fmt.Printf("[%s] SSDBM Info[IP]:%v [Port]:%v [Max]:%v [Pool]:%v [Use]:%v [NoUse]:%v [Close]:%v [Total]:%v [Success]:%v [Failed]:%v\n",now_time,db.ip,db.port,db.max_connect,len(SSDBM.connect_pool),use,nouse,close_count,count,success,failed)
-	
-}
 
 func Connect(ip string, port int, auth string) (*Client, error) {
-	if SSDBM == nil {
-		SSDBM = SSDBInit(ip,port,100)
-		//SSDBM.Recycle()
-	}
-	/*SSDBM.mu.Lock()
-	for i,v := range SSDBM.connect_pool {
-		if v.reuse && v.connected {
-			v.mu.Lock()
-			v.reuse = true
-			v.mu.Unlock()
-			return v,nil
-		} else if !v.connected {
-			SSDBM.connect_pool = append(SSDBM.connect_pool[:i], SSDBM.connect_pool[i+1:]...)
-		}
-	}
-	SSDBM.mu.Unlock()*/
 	client,err := connect(ip,port,auth)
 	if err != nil {
 		go client.RetryConnect()
 		return client,err
 	}
 	if client != nil {
-		SSDBM.connect_pool = append(SSDBM.connect_pool,client)
 		client.id = time.Now().UnixNano()
 		return client,nil
 	}
@@ -150,28 +71,41 @@ func (c *Client) Connect() error {
 	}
 	sock, err := net.DialTCP("tcp", nil, addr)
 	if err != nil {
-		log.Println("Client dial failed:",err)
+		log.Println("SSDB Client dial failed:",err)
 		return err
 	}
-	c.last_time = time.Now().Unix()
 	c.sock = sock
-	c.reuse = true
 	c.connected = true
+	if c.retry {
+		log.Printf("Client retry connect to %s:%d success.",c.Ip, c.Port)
+	}
+	c.retry = false
 	if c.Password != "" {
     	c.Auth(c.Password)
     }
-	//log.Println("Client connected to ",c.Ip, c.Port)
+	
 	return nil
 }
 
-func (cl *Client) RetryConnect() {
-	log.Println("Client retry connect to ",cl.Ip, cl.Port)
-	for {
-		if !cl.connected {
-			cl.Connect()
-			time.Sleep(10 * time.Second)
-		} else {
-			break
+func (c *Client) RetryConnect() {
+	c.mu.Lock()
+	retry := false
+	if !c.retry {
+		c.retry = true
+		retry = true
+	}
+	c.mu.Unlock()
+	if retry {
+		log.Println("Client retry connect to ",c.Ip, c.Port)
+		for {
+			if !c.connected {
+				err := c.Connect()
+				if err != nil {
+					time.Sleep(60 * time.Second)
+				}
+			} else {
+				break
+			}
 		}
 	}
 }
@@ -184,10 +118,6 @@ func (c *Client) CheckError(err error) {
 }
 
 func (c *Client) Do(args ...interface{}) ([]string, error) {
-	 c.mu.Lock()
-     defer c.mu.Unlock()
-     c.reuse = false
-     c.count++
      err := c.send(args)
      if err != nil {
          log.Println("SSDB Client Do send error:",err)
@@ -200,30 +130,17 @@ func (c *Client) Do(args ...interface{}) ([]string, error) {
            c.CheckError(err)
 	      return nil, err
      }
-     c.success++
-     c.reuse = true
-     /*if resp[0] == "error" {
-     	err = fmt.Errorf("bad response:%v",resp[1])
-     }*/
-     if err != nil {
-     	return nil,err
-     }
      return resp, err
 }
 
 
 func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) {
 	if c.connected {
-	    c.last_time = time.Now().Unix()
 	    args = append(args,nil)
 	    // Use copy to move the upper part of the slice out of the way and open a hole.
 	    copy(args[1:], args[0:])
 	    // Store the cmd to args
 	    args[0] = cmd
-	    c.mu.Lock()
-		defer c.mu.Unlock()
-		c.reuse = false
-		c.count++
 		err := c.send(args)
 		if err != nil {
 			log.Println("SSDB Client ProcessCmd send error:",err)
@@ -236,9 +153,7 @@ func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) 
 			c.CheckError(err)
 			return nil, err
 		}
-		//log.Println("Process:",args,resp)
-		c.success++
-		c.reuse = true
+		
 		if len(resp) == 2 && resp[0] == "ok" {
 			switch cmd {
 				case "set","del":
@@ -255,14 +170,14 @@ func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) 
 					return resp[1], nil
 			}
 			
-		}else if resp[0] == "not_found" {
+		}else if len(resp) == 1 && resp[0] == "not_found" {
 			return nil, nil
 		} else {
-			if resp[0] == "ok" {
+			if len(resp) >= 1 && resp[0] == "ok" {
 				//fmt.Println("Process:",args,resp)
 				switch cmd {
 					case "hgetall","hscan","hrscan","multi_hget","scan","rscan":
-						list := make(map[string]interface{})
+						list := make(map[string]string)
 						length := len(resp[1:])
 						data := resp[1:]
 						for i := 0; i < length; i += 2 {
@@ -274,7 +189,10 @@ func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) 
 				}
 			}
 		}
-		
+		if len(resp) == 2 && strings.Contains( resp[1], "connection") {
+			c.Close()
+         	go c.RetryConnect()
+		} 
 		return nil, fmt.Errorf("bad response:%v",resp)
 	} else {
 		return nil, fmt.Errorf("lost connection")
@@ -479,7 +397,7 @@ func (c *Client) HashKeysAll(hash string) ([]string, error) {
 	return range_keys,nil
 }
 
-func (c *Client) HashGetAllLite(hash string) (map[string]string, error) {
+func (c *Client) HashGetAll(hash string) (map[string]string, error) {
 	params := []interface{}{hash}
 	val,err := c.ProcessCmd("hgetall",params)
 	if err != nil {
@@ -491,7 +409,7 @@ func (c *Client) HashGetAllLite(hash string) (map[string]string, error) {
 	return nil,nil
 }
 
-func (c *Client) HashGetAll(hash string) (map[string]interface{}, error) {
+func (c *Client) HashGetAllLite(hash string) (map[string]string, error) {
 	size,err := c.HashSize(hash)
 	if err != nil {
 		return nil,err
@@ -502,7 +420,7 @@ func (c *Client) HashGetAll(hash string) (map[string]interface{}, error) {
 	splitSize := math.Ceil(float64(hashSize)/float64(page_range))
 	//log.Printf("DB Hash Size:%d hashSize:%d splitSize:%f\n",size,hashSize,splitSize)
 	var range_keys []string
-	GetResult := make(map[string]interface{})
+	GetResult := make(map[string]string)
 	for i := 1;i <= int(splitSize);i++ {
 		start := ""
 		end := ""
@@ -545,25 +463,25 @@ func (c *Client) HashGetAll(hash string) (map[string]interface{}, error) {
 	return GetResult,nil
 }
 
-func (c *Client) HashScan(hash string,start string,end string,limit int) (map[string]interface{}, error) {
+func (c *Client) HashScan(hash string,start string,end string,limit int) (map[string]string, error) {
 	params := []interface{}{hash,start,end,limit}
 	val,err := c.ProcessCmd("hscan",params)
 	if err != nil {
 		return nil,err
 	} else {
-		return val.(map[string]interface{}),err
+		return val.(map[string]string),err
 	}
 	
 	return nil,nil
 }
 
-func (c *Client) HashRScan(hash string,start string,end string,limit int) (map[string]interface{}, error) {
+func (c *Client) HashRScan(hash string,start string,end string,limit int) (map[string]string, error) {
 	params := []interface{}{hash,start,end,limit}
 	val,err := c.ProcessCmd("hrscan",params)
 	if err != nil {
 		return nil,err
 	} else {
-		return val.(map[string]interface{}),err
+		return val.(map[string]string),err
 	}
 	return nil,nil
 }
@@ -577,7 +495,7 @@ func (c *Client) HashMultiSet(hash string,data map[string]string) (interface{}, 
 	return c.ProcessCmd("multi_hset",params)
 }
 
-func (c *Client) HashMultiGet(hash string,keys []string) (map[string]interface{}, error) {
+func (c *Client) HashMultiGet(hash string,keys []string) (map[string]string, error) {
 	params := []interface{}{hash}
 	for _,v := range keys {
 		params = append(params, v)
@@ -586,7 +504,7 @@ func (c *Client) HashMultiGet(hash string,keys []string) (map[string]interface{}
 	if err != nil {
 		return nil,err
 	} else {
-		return val.(map[string]interface{}),err
+		return val.(map[string]string),err
 	}
 	return nil,nil
 }
@@ -659,13 +577,27 @@ func (c *Client) Recv() ([]string, error) {
 }
 
 func (c *Client) recv() ([]string, error) {
-	var tmp [1]byte
+	tmp := make([]byte, 1024000)
 	for {
 		resp := c.parse()
 		if resp == nil || len(resp) > 0 {
+			//log.Println("SSDB Receive:",resp)
+			if len(resp) > 0 && resp[0] == "zip" {
+				//log.Println("SSDB Receive Zip\n",resp)
+				zipData,err := base64.StdEncoding.DecodeString(resp[1])
+				if err != nil {
+					return nil, err
+				}
+				resp = UnZip(zipData)
+				 
+				/*log.Println("unzip size:",len(resp))
+				for k,v := range resp {
+					log.Printf("unzip[%v]:%v\n",k,v)
+				}*/
+			}
 			return resp, nil
 		}
-		n, err := c.sock.Read(tmp[0:])
+		n, err := c.sock.Read(tmp)
 		if err != nil {
 			return nil, err
 		}
@@ -679,7 +611,6 @@ func (c *Client) parse() []string {
 	var idx, offset int
 	idx = 0
 	offset = 0
-
 	for {
 		idx = bytes.IndexByte(buf[offset:], '\n')
 		if idx == -1 {
@@ -701,7 +632,10 @@ func (c *Client) parse() []string {
 		if err != nil || size < 0 {
 			return nil
 		}
+		//fmt.Printf("packet size:%d\n",size);
 		if offset+size >= c.recv_buf.Len() {
+			//tmpLen := offset+size
+			//fmt.Printf("buf size too big:%d > buf len:%d\n",tmpLen,c.recv_buf.Len());
 			break
 		}
 
@@ -714,10 +648,53 @@ func (c *Client) parse() []string {
 	return []string{}
 }
 
+func UnZip(data []byte) []string {
+	var buf bytes.Buffer
+	buf.Write(data)
+    zipReader, err := gzip.NewReader(&buf)
+    if err != nil {
+        log.Println("[ERROR] New gzip reader:", err)
+    }
+    defer zipReader.Close()
+
+    zipData, err := ioutil.ReadAll(zipReader)
+    if err != nil {
+        fmt.Println("[ERROR] ReadAll:", err)
+        return nil
+    }
+    var resp []string
+
+    if zipData != nil {
+    	idx := 0
+    	offset := 0
+    	hiIdx := 0
+		for {
+			idx = bytes.IndexByte(zipData, '\n')
+			if idx == -1 {
+				break
+			}
+			p := string(zipData[:idx])
+			//fmt.Println("p:[",p,"]\n")
+			size, err := strconv.Atoi(string(p))
+			if err != nil || size < 0 {
+				zipData = zipData[idx+1:]
+				continue
+			} else {
+				offset = idx+1+size
+				hiIdx = size+idx+1
+				resp = append(resp,string(zipData[idx+1:hiIdx]))
+				//fmt.Printf("data:[%s] size:%d idx:%d\n",str,size,idx+1)
+				zipData = zipData[offset:]
+			}
+			
+		}
+	}
+    return resp
+}
+
 
 // Close The Client Connection
 func (c *Client) Close() error {
 	c.connected = false
-	c.reuse = false
 	return c.sock.Close()
 }
