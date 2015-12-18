@@ -21,12 +21,12 @@ import (
 type Client struct {
 	sock *net.TCPConn
 	recv_buf bytes.Buffer
-	id int64
+	Id string
 	Ip string
 	Port int
 	Password string
-	connected bool
-	retry bool
+	Connected bool
+	Retry bool
 	mu	*sync.Mutex
 }
 
@@ -36,6 +36,7 @@ type HashData struct {
 	Value    string
 }
 
+var debug bool = true
 var version string = "0.1.3"
 const layout = "2006-01-06 15:04:05"
 
@@ -43,11 +44,14 @@ const layout = "2006-01-06 15:04:05"
 func Connect(ip string, port int, auth string) (*Client, error) {
 	client,err := connect(ip,port,auth)
 	if err != nil {
+		if debug {
+			log.Printf("SSDB Client Connect failed:%s:%d error:%v\n",ip, port,err)
+		}
 		go client.RetryConnect()
 		return client,err
 	}
 	if client != nil {
-		client.id = time.Now().UnixNano()
+		client.Id = fmt.Sprintf("Cl-%d",time.Now().UnixNano())
 		return client,nil
 	}
 	return nil,nil
@@ -71,15 +75,17 @@ func (c *Client) Connect() error {
 	}
 	sock, err := net.DialTCP("tcp", nil, addr)
 	if err != nil {
-		log.Println("SSDB Client dial failed:",err)
+		log.Println("SSDB Client dial failed:",err,c.Id)
 		return err
 	}
 	c.sock = sock
-	c.connected = true
-	if c.retry {
-		log.Printf("Client retry connect to %s:%d success.",c.Ip, c.Port)
+	c.Connected = true
+	if c.Retry {
+		if debug {
+			log.Printf("Client[%s] Retry connect to %s:%d success.",c.Id, c.Ip, c.Port)
+		}	
 	}
-	c.retry = false
+	c.Retry = false
 	if c.Password != "" {
     	c.Auth(c.Password)
     }
@@ -89,19 +95,25 @@ func (c *Client) Connect() error {
 
 func (c *Client) RetryConnect() {
 	c.mu.Lock()
-	retry := false
-	if !c.retry {
-		c.retry = true
-		retry = true
+	Retry := false
+	if !c.Retry {
+		c.Retry = true
+		Retry = true
+		c.Connected = false
 	}
 	c.mu.Unlock()
-	if retry {
-		log.Println("Client retry connect to ",c.Ip, c.Port)
+	if Retry {
+		if debug {
+			log.Printf("Client[%s] Retry connect to %s:%d",c.Id, c.Ip, c.Port)
+		}	
+		time.Sleep(2 * time.Second)
 		for {
-			if !c.connected {
+			if !c.Connected {
 				err := c.Connect()
 				if err != nil {
-					time.Sleep(60 * time.Second)
+					time.Sleep(10 * time.Second)
+				} else {
+					break
 				}
 			} else {
 				break
@@ -118,24 +130,31 @@ func (c *Client) CheckError(err error) {
 }
 
 func (c *Client) Do(args ...interface{}) ([]string, error) {
-     err := c.send(args)
-     if err != nil {
-         log.Println("SSDB Client Do send error:",err)
-         c.CheckError(err)
-         return nil, err
-     }
-     resp, err := c.recv()
-     if err != nil {
-           log.Println("SSDB Client Do recv error:",err)
-           c.CheckError(err)
-	      return nil, err
-     }
-     return resp, err
+	if c.Connected {
+	     err := c.send(args)
+	     if err != nil {
+	     	 if debug {
+	         	log.Printf("SSDB Client[%s] Do Send Error:%v Data:%v\n",c.Id,err,args)
+	         }	
+	         c.CheckError(err)
+	         return nil, err
+	     }
+	     resp, err := c.recv()
+	     if err != nil {
+	     	  if debug {
+	          	log.Printf("SSDB Client[%s] Do Receive Error:%v Data:%v\n",c.Id,err,args)
+	          }	
+	          c.CheckError(err)
+		      return nil, err
+	     }
+	     return resp,nil
+     } 
+     return nil, fmt.Errorf("lost connection")
 }
 
 
 func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) {
-	if c.connected {
+	if c.Connected {
 	    args = append(args,nil)
 	    // Use copy to move the upper part of the slice out of the way and open a hole.
 	    copy(args[1:], args[0:])
@@ -143,13 +162,13 @@ func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) 
 	    args[0] = cmd
 		err := c.send(args)
 		if err != nil {
-			log.Println("SSDB Client ProcessCmd send error:",err)
+			log.Printf("SSDB Client[%s] ProcessCmd Send Error:%v Data:%v\n",c.Id,err,args)
 			c.CheckError(err)
 			return nil, err
 		}
 		resp, err := c.recv()
 		if err != nil {
-			log.Println("SSDB Client ProcessCmd receive error:",err)
+			log.Printf("SSDB Client[%s] ProcessCmd Receive Error:%v Data:%v\n",c.Id,err,args)
 			c.CheckError(err)
 			return nil, err
 		}
@@ -608,16 +627,16 @@ func (c *Client) recv() ([]string, error) {
 func (c *Client) parse() []string {
 	resp := []string{}
 	buf := c.recv_buf.Bytes()
-	var idx, offset int
-	idx = 0
+	var Idx, offset int
+	Idx = 0
 	offset = 0
 	for {
-		idx = bytes.IndexByte(buf[offset:], '\n')
-		if idx == -1 {
+		Idx = bytes.IndexByte(buf[offset:], '\n')
+		if Idx == -1 {
 			break
 		}
-		p := buf[offset : offset+idx]
-		offset += idx + 1
+		p := buf[offset : offset+Idx]
+		offset += Idx + 1
 		//fmt.Printf("> [%s]\n", p);
 		if len(p) == 0 || (len(p) == 1 && p[0] == '\r') {
 			if len(resp) == 0 {
@@ -665,25 +684,25 @@ func UnZip(data []byte) []string {
     var resp []string
 
     if zipData != nil {
-    	idx := 0
+    	Idx := 0
     	offset := 0
     	hiIdx := 0
 		for {
-			idx = bytes.IndexByte(zipData, '\n')
-			if idx == -1 {
+			Idx = bytes.IndexByte(zipData, '\n')
+			if Idx == -1 {
 				break
 			}
-			p := string(zipData[:idx])
+			p := string(zipData[:Idx])
 			//fmt.Println("p:[",p,"]\n")
 			size, err := strconv.Atoi(string(p))
 			if err != nil || size < 0 {
-				zipData = zipData[idx+1:]
+				zipData = zipData[Idx+1:]
 				continue
 			} else {
-				offset = idx+1+size
-				hiIdx = size+idx+1
-				resp = append(resp,string(zipData[idx+1:hiIdx]))
-				//fmt.Printf("data:[%s] size:%d idx:%d\n",str,size,idx+1)
+				offset = Idx+1+size
+				hiIdx = size+Idx+1
+				resp = append(resp,string(zipData[Idx+1:hiIdx]))
+				//fmt.Printf("data:[%s] size:%d Idx:%d\n",str,size,Idx+1)
 				zipData = zipData[offset:]
 			}
 			
@@ -695,6 +714,6 @@ func UnZip(data []byte) []string {
 
 // Close The Client Connection
 func (c *Client) Close() error {
-	c.connected = false
+	c.Connected = false
 	return c.sock.Close()
 }
