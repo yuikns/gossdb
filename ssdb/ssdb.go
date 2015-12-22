@@ -51,7 +51,6 @@ func Connect(ip string, port int, auth string) (*Client, error) {
 		return client,err
 	}
 	if client != nil {
-		client.Id = fmt.Sprintf("Cl-%d",time.Now().UnixNano())
 		return client,nil
 	}
 	return nil,nil
@@ -62,6 +61,7 @@ func connect(ip string, port int,auth string) (*Client, error) {
 	c.Ip = ip
 	c.Port = port
 	c.Password = auth
+	c.Id = fmt.Sprintf("Cl-%d",time.Now().UnixNano())
 	c.mu = &sync.Mutex{}
 	err := c.Connect()
 	return &c, err
@@ -212,7 +212,8 @@ func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) 
 			c.Close()
          	go c.RetryConnect()
 		} 
-		return nil, fmt.Errorf("bad response:%v",resp)
+		log.Printf("SSDB Client Error Response:%v args:%v Error:%v",resp,args,err)
+		return nil, fmt.Errorf("bad response:%v args:%v",resp,args)
 	} else {
 		return nil, fmt.Errorf("lost connection")
 	}
@@ -596,7 +597,8 @@ func (c *Client) Recv() ([]string, error) {
 }
 
 func (c *Client) recv() ([]string, error) {
-	tmp := make([]byte, 1024000)
+	//tmp := make([]byte, 102400)
+	var tmp [102400]byte
 	for {
 		resp := c.parse()
 		if resp == nil || len(resp) > 0 {
@@ -608,15 +610,10 @@ func (c *Client) recv() ([]string, error) {
 					return nil, err
 				}
 				resp = UnZip(zipData)
-				 
-				/*log.Println("unzip size:",len(resp))
-				for k,v := range resp {
-					log.Printf("unzip[%v]:%v\n",k,v)
-				}*/
 			}
 			return resp, nil
 		}
-		n, err := c.sock.Read(tmp)
+		n, err := c.sock.Read(tmp[0:])
 		if err != nil {
 			return nil, err
 		}
@@ -646,9 +643,10 @@ func (c *Client) parse() []string {
 				return resp
 			}
 		}
-
-		size, err := strconv.Atoi(string(p))
-		if err != nil || size < 0 {
+		pIdx := strings.Replace(strconv.Quote(string(p)),`"`,``,-1)
+		size, err := strconv.Atoi(pIdx)
+		if err != nil || size < 0 {			
+			//log.Printf("SSDB Parse Error:%v data:%v\n",err,pIdx)
 			return nil
 		}
 		//fmt.Printf("packet size:%d\n",size);
