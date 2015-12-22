@@ -609,7 +609,7 @@ func (c *Client) recv() ([]string, error) {
 				if err != nil {
 					return nil, err
 				}
-				resp = UnZip(zipData)
+				resp = c.UnZip(zipData)
 			}
 			return resp, nil
 		}
@@ -665,7 +665,7 @@ func (c *Client) parse() []string {
 	return []string{}
 }
 
-func UnZip(data []byte) []string {
+func (c *Client) UnZip(data []byte) []string {
 	var buf bytes.Buffer
 	buf.Write(data)
     zipReader, err := gzip.NewReader(&buf)

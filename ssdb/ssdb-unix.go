@@ -13,12 +13,16 @@ import (
 	_"syscall"
 	"strings"
 	"log"
+	"io/ioutil"
+	"encoding/base64"
+	"compress/gzip"
+	
 )
 
 type UnixClient struct {
 	sock *net.UnixConn
 	recv_buf bytes.Buffer
-	id int64
+	Id string
 	Ip string
 	Port int
 	Password string
@@ -62,8 +66,6 @@ func (c *UnixClient) Connect() error {
 	    log.Println("Client dial failed:",err)
 		return err
 	}   
-	
-	c.last_time = time.Now().Unix()
 	c.sock = sock
 	c.Connected = true
 	if c.Retry {
@@ -79,7 +81,7 @@ func (c *UnixClient) Connect() error {
 	return nil
 }
 
-func (cl *UnixClient) RetryConnect() {
+func (c *UnixClient) RetryConnect() {
 	c.mu.Lock()
 	Retry := false
 	if !c.Retry {
@@ -116,37 +118,30 @@ func (c *UnixClient) CheckError(err error) {
 }
 
 func (c *UnixClient) Do(args ...interface{}) ([]string, error) {
-	 c.mu.Lock()
-     defer c.mu.Unlock()
-     c.reuse = false
-     c.count++
-     err := c.send(args)
-     if err != nil {
-         log.Println("SSDB Client Do send error:",err)
-         c.CheckError(err)
-         return nil, err
-     }
-     resp, err := c.recv()
-     if err != nil {
-           log.Println("SSDB Client Do recv error:",err)
-           c.CheckError(err)
-	      return nil, err
-     }
-     c.success++
-     c.reuse = true
-     /*if resp[0] == "error" {
-     	err = fmt.Errorf("bad response:%v",resp[1])
-     }*/
-     if err != nil {
-     	return nil,err
-     }
-     return resp, err
+	if c.Connected {
+	     err := c.send(args)
+	     if err != nil {
+	     	 if debug {
+	         	log.Printf("SSDB Client[%s] Do Send Error:%v Data:%v\n",c.Id,err,args)
+	         }	
+	         c.CheckError(err)
+	         return nil, err
+	     }
+	     resp, err := c.recv()
+	     if err != nil {
+	     	  if debug {
+	          	log.Printf("SSDB Client[%s] Do Receive Error:%v Data:%v\n",c.Id,err,args)
+	          }	
+	          c.CheckError(err)
+		      return nil, err
+	     }
+	     return resp,nil
+     } 
+     return nil, fmt.Errorf("lost connection")
 }
-
 
 func (c *UnixClient) ProcessCmd(cmd string,args []interface{}) (interface{}, error) {
 	if c.Connected {
-	    c.last_time = time.Now().Unix()
 	    args = append(args,nil)
 	    // Use copy to move the upper part of the slice out of the way and open a hole.
 	    copy(args[1:], args[0:])
@@ -154,8 +149,6 @@ func (c *UnixClient) ProcessCmd(cmd string,args []interface{}) (interface{}, err
 	    args[0] = cmd
 	    c.mu.Lock()
 		defer c.mu.Unlock()
-		c.reuse = false
-		c.count++
 		err := c.send(args)
 		if err != nil {
 			log.Println("SSDB Client ProcessCmd send error:",err)
@@ -168,9 +161,6 @@ func (c *UnixClient) ProcessCmd(cmd string,args []interface{}) (interface{}, err
 			c.CheckError(err)
 			return nil, err
 		}
-		//log.Println("Process:",args,resp)
-		c.success++
-		c.reuse = true
 		if len(resp) == 2 && resp[0] == "ok" {
 			switch cmd {
 				case "set","del":
@@ -432,7 +422,7 @@ func (c *UnixClient) HashScan(hash string,start string,end string,limit int) (ma
 	if err != nil {
 		return nil,err
 	} else {
-		return val,err
+		return val.(map[string]string),err
 	}
 	
 	return nil,nil
@@ -444,7 +434,7 @@ func (c *UnixClient) HashRScan(hash string,start string,end string,limit int) (m
 	if err != nil {
 		return nil,err
 	} else {
-		return val,err
+		return val.(map[string]string),err
 	}
 	return nil,nil
 }
@@ -551,7 +541,7 @@ func (c *UnixClient) recv() ([]string, error) {
 				if err != nil {
 					return nil, err
 				}
-				resp = UnZip(zipData)
+				resp = c.UnZip(zipData)
 			}
 			return resp, nil
 		}
@@ -607,7 +597,7 @@ func (c *UnixClient) parse() []string {
 	return []string{}
 }
 
-func UnZip(data []byte) []string {
+func (c *UnixClient) UnZip(data []byte) []string {
 	var buf bytes.Buffer
 	buf.Write(data)
     zipReader, err := gzip.NewReader(&buf)
