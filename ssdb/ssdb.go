@@ -21,8 +21,8 @@ import (
 type Client struct {
 	sock *net.TCPConn
 	recv_buf bytes.Buffer
-	//process chan []string
-	//result chan []string,error
+	process chan []interface{}
+	result chan ClientResult
 	Id string
 	Ip string
 	Port int
@@ -30,6 +30,11 @@ type Client struct {
 	Connected bool
 	Retry bool
 	mu	*sync.Mutex
+}
+
+type ClientResult struct {
+	Data []string
+	Error error
 }
 
 type HashData struct {
@@ -88,8 +93,9 @@ func (c *Client) Connect() error {
 		}	
 	}
 	c.Retry = false
-	//c.process = make(chan []string)
-	//c.result = make(chan []string)
+	c.process = make(chan []interface{})
+	c.result = make(chan ClientResult)
+	go c.processDo()
 	if c.Password != "" {
     	c.Auth(c.Password)
     }
@@ -104,7 +110,7 @@ func (c *Client) KeepAlive() {
 func (c *Client) HealthCheck() {
 	timeout := 60
 	//wait client connect to server
-	time.Sleep(5 * time.Second)
+	//time.Sleep(5 * time.Second)
 	for c.Connected {
 		result,err := c.Do("ping")
 		if err != nil {
@@ -152,14 +158,20 @@ func (c *Client) CheckError(err error) {
      }
 }
 
-/*func (c *Client) processDo(args ...interface{}) {
-	for args range c.process {
-		result,err := c.Do(args)
-		c.result <-
+func (c *Client) processDo() {
+	for args := range c.process {
+		result,err := c.do(args)
+		c.result <- ClientResult{Data:result,Error:err}
 	}
-}*/
+}
 
 func (c *Client) Do(args ...interface{}) ([]string, error) {
+	c.process <- args
+	result := <- c.result
+	return result.Data,result.Error
+}
+
+func (c *Client) do(args []interface{}) ([]string, error) {
 	if c.Connected {
 	     err := c.send(args)
 	     if err != nil {
@@ -190,6 +202,8 @@ func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) 
 	    copy(args[1:], args[0:])
 	    // Store the cmd to args
 	    args[0] = cmd
+	    /*
+	    log.Println("ProcessCmd args:",args,len(args))
 		err := c.send(args)
 		if err != nil {
 			log.Printf("SSDB Client[%s] ProcessCmd Send Error:%v Data:%v\n",c.Id,err,args)
@@ -201,7 +215,14 @@ func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) 
 			log.Printf("SSDB Client[%s] ProcessCmd Receive Error:%v Data:%v\n",c.Id,err,args)
 			c.CheckError(err)
 			return nil, err
+		}*/
+		c.process <- args
+		result := <- c.result
+		err := result.Error
+		if err != nil {
+			return nil, err
 		}
+		resp := result.Data
 		
 		if len(resp) == 2 && resp[0] == "ok" {
 			switch cmd {
@@ -250,8 +271,11 @@ func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) 
 }
 
 func (c *Client) Auth(pwd string) (interface{}, error) {
-	params := []interface{}{pwd}
-	return c.ProcessCmd("auth",params)
+	//params := []interface{}{pwd}
+	c.process <- []interface{}{"auth",pwd}
+	result := <- c.result
+	return result.Data,result.Error
+	//return c.ProcessCmd("auth",params)
 }
 
 func (c *Client) Set(key string, val string) (interface{}, error) {
