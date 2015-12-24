@@ -21,6 +21,8 @@ import (
 type Client struct {
 	sock *net.TCPConn
 	recv_buf bytes.Buffer
+	//process chan []string
+	//result chan []string,error
 	Id string
 	Ip string
 	Port int
@@ -86,6 +88,8 @@ func (c *Client) Connect() error {
 		}	
 	}
 	c.Retry = false
+	//c.process = make(chan []string)
+	//c.result = make(chan []string)
 	if c.Password != "" {
     	c.Auth(c.Password)
     }
@@ -103,11 +107,11 @@ func (c *Client) HealthCheck() {
 	time.Sleep(5 * time.Second)
 	for c.Connected {
 		result,err := c.Do("ping")
-		/*if err != nil {
+		if err != nil {
 			log.Printf("Client Health Check Failed[%s]:%v\n",c.Id,err)
 		} else {
 			log.Printf("Client Health Check Success[%s]:%v\n",c.Id,result)
-		}*/
+		}
 		time.Sleep(time.Duration(timeout) * time.Second)
 	}
 }
@@ -147,6 +151,13 @@ func (c *Client) CheckError(err error) {
          go c.RetryConnect()
      }
 }
+
+/*func (c *Client) processDo(args ...interface{}) {
+	for args range c.process {
+		result,err := c.Do(args)
+		c.result <-
+	}
+}*/
 
 func (c *Client) Do(args ...interface{}) ([]string, error) {
 	if c.Connected {
