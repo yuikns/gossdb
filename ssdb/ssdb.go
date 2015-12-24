@@ -37,7 +37,7 @@ type HashData struct {
 }
 
 var debug bool = true
-var version string = "0.1.3"
+var version string = "0.1.4"
 const layout = "2006-01-06 15:04:05"
 
 
@@ -91,6 +91,25 @@ func (c *Client) Connect() error {
     }
 	
 	return nil
+}
+
+func (c *Client) KeepAlive() {
+	go c.HealthCheck()
+}
+
+func (c *Client) HealthCheck() {
+	timeout := 60
+	//wait client connect to server
+	time.Sleep(5 * time.Second)
+	for c.Connected {
+		result,err := c.Do("ping")
+		/*if err != nil {
+			log.Printf("Client Health Check Failed[%s]:%v\n",c.Id,err)
+		} else {
+			log.Printf("Client Health Check Success[%s]:%v\n",c.Id,result)
+		}*/
+		time.Sleep(time.Duration(timeout) * time.Second)
+	}
 }
 
 func (c *Client) RetryConnect() {
