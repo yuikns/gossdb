@@ -161,7 +161,11 @@ func (c *Client) CheckError(err error) {
 func (c *Client) processDo() {
 	for args := range c.process {
 		result,err := c.do(args)
-		c.result <- ClientResult{Data:result,Error:err}
+		if c.Connected && !c.Retry {
+			c.result <- ClientResult{Data:result,Error:err}
+		} else {
+			break
+		}
 	}
 }
 
@@ -767,5 +771,9 @@ func (c *Client) UnZip(data []byte) []string {
 // Close The Client Connection
 func (c *Client) Close() error {
 	c.Connected = false
-	return c.sock.Close()
+	close(c.process)
+	close(c.result)
+	c.sock.Close()
+	c = nil
+	return nil
 }
