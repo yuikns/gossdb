@@ -30,6 +30,7 @@ type Client struct {
 	Connected bool
 	Retry bool
 	mu	*sync.Mutex
+	Closed bool
 }
 
 type ClientResult struct {
@@ -133,11 +134,11 @@ func (c *Client) RetryConnect() {
 	c.mu.Unlock()
 	if Retry {
 		if debug {
-			log.Printf("Client[%s] Retry connect to %s:%d",c.Id, c.Ip, c.Port)
+			log.Printf("Client[%s] Retry connect to %s:%d\n",c.Id, c.Ip, c.Port)
 		}	
 		time.Sleep(2 * time.Second)
 		for {
-			if !c.Connected {
+			if !c.Connected && !c.Closed {
 				err := c.Connect()
 				if err != nil {
 					time.Sleep(10 * time.Second)
@@ -145,6 +146,9 @@ func (c *Client) RetryConnect() {
 					break
 				}
 			} else {
+				if debug {
+					log.Printf("Client[%s] Retry connect to %s:%d stop by conn:%v closed:%v\n.",c.Id, c.Ip, c.Port,c.Connected,c.Closed )
+				}
 				break
 			}
 		}
@@ -153,26 +157,36 @@ func (c *Client) RetryConnect() {
 
 func (c *Client) CheckError(err error) {
 	 if err == io.EOF || strings.Contains(err.Error(), "connection") || strings.Contains(err.Error(), "timed out" ) || strings.Contains(err.Error(), "route" ) {
-         c.Close()
-         go c.RetryConnect()
+         
+         if !c.Closed {
+         	log.Printf("Check Error:%v Retry connect.\n",err)
+         	c.sock.Close()
+         	go c.RetryConnect()
+         }
+         
      }
 }
 
 func (c *Client) processDo() {
 	for args := range c.process {
 		result,err := c.do(args)
-		if c.Connected && !c.Retry {
+		if c.Connected && !c.Retry && !c.Closed {
 			c.result <- ClientResult{Data:result,Error:err}
 		} else {
 			break
 		}
 	}
+	//close(c.result)
+	//log.Println("processDo process channel has closed")
 }
 
 func (c *Client) Do(args ...interface{}) ([]string, error) {
-	c.process <- args
-	result := <- c.result
-	return result.Data,result.Error
+	if c.Connected && !c.Retry && !c.Closed {
+		c.process <- args
+		result := <- c.result
+		return result.Data,result.Error
+	}
+	return nil,fmt.Errorf("Connection has closed.")
 }
 
 func (c *Client) do(args []interface{}) ([]string, error) {
@@ -264,7 +278,7 @@ func (c *Client) ProcessCmd(cmd string,args []interface{}) (interface{}, error) 
 			}
 		}
 		if len(resp) == 2 && strings.Contains( resp[1], "connection") {
-			c.Close()
+			c.sock.Close()
          	go c.RetryConnect()
 		} 
 		log.Printf("SSDB Client Error Response:%v args:%v Error:%v",resp,args,err)
@@ -770,9 +784,11 @@ func (c *Client) UnZip(data []byte) []string {
 
 // Close The Client Connection
 func (c *Client) Close() error {
+	c.mu.Lock()
 	c.Connected = false
+	c.Closed = true
+	c.mu.Unlock()
 	close(c.process)
-	close(c.result)
 	c.sock.Close()
 	c = nil
 	return nil
