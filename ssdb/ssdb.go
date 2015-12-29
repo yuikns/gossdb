@@ -75,6 +75,12 @@ func connect(ip string, port int,auth string) (*Client, error) {
 	return &c, err
 }
 
+func (c *Client) Debug(flag bool) bool {
+	debug = flag
+	log.Println("SSDB Client Debug Mode:",debug)
+	return debug
+}
+
 func (c *Client) Connect() error {
 	addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", c.Ip, c.Port))
 	if err != nil {
@@ -112,12 +118,16 @@ func (c *Client) HealthCheck() {
 	timeout := 60
 	//wait client connect to server
 	//time.Sleep(5 * time.Second)
-	for c.Connected {
-		result,err := c.Do("ping")
-		if err != nil {
-			log.Printf("Client Health Check Failed[%s]:%v\n",c.Id,err)
-		} else {
-			log.Printf("Client Health Check Success[%s]:%v\n",c.Id,result)
+	for {
+		if c.Connected && !c.Retry && !c.Closed {
+			result,err := c.Do("ping")
+			if err != nil {
+				log.Printf("Client Health Check Failed[%s]:%v\n",c.Id,err)
+			} else {
+				if debug {
+					log.Printf("Client Health Check Success[%s]:%v\n",c.Id,result)
+				}
+			}
 		}
 		time.Sleep(time.Duration(timeout) * time.Second)
 	}
@@ -133,9 +143,8 @@ func (c *Client) RetryConnect() {
 	}
 	c.mu.Unlock()
 	if Retry {
-		if debug {
-			log.Printf("Client[%s] Retry connect to %s:%d\n",c.Id, c.Ip, c.Port)
-		}	
+		log.Printf("Client[%s] Retry connect to %s:%d\n",c.Id, c.Ip, c.Port)
+		
 		time.Sleep(2 * time.Second)
 		for {
 			if !c.Connected && !c.Closed {
@@ -146,9 +155,7 @@ func (c *Client) RetryConnect() {
 					break
 				}
 			} else {
-				if debug {
-					log.Printf("Client[%s] Retry connect to %s:%d stop by conn:%v closed:%v\n.",c.Id, c.Ip, c.Port,c.Connected,c.Closed )
-				}
+				log.Printf("Client[%s] Retry connect to %s:%d stop by conn:%v closed:%v\n.",c.Id, c.Ip, c.Port,c.Connected,c.Closed )
 				break
 			}
 		}
