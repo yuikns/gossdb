@@ -204,6 +204,8 @@ func (c *Client) Do(args ...interface{}) ([]string, error) {
 		for result := range c.result {
 			if result.Id == runId {
 				return result.Data, result.Error
+			} else {
+				c.result <- result
 			}
 		}
 	}
@@ -245,6 +247,8 @@ func (c *Client) ProcessCmd(cmd string, args []interface{}) (interface{}, error)
 			if result.Id == runId {
 				resResult = result
 				break
+			} else {
+				c.result <- result
 			}
 		}
 		if resResult.Error != nil {
