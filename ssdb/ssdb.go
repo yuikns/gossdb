@@ -211,7 +211,7 @@ func (c *Client) Do(args ...interface{}) ([]string, error) {
 	return nil, fmt.Errorf("Connection has closed.")
 }
 
-func (c *Client) Multi(args ...[]interface{}) ([]string, error) {
+func (c *Client) MultiMode(args [][]interface{}) ([]string, error) {
 	if c.Connected {
 		for _, v := range args {
 			err := c.send(v)
@@ -278,10 +278,7 @@ func (c *Client) ProcessCmd(cmd string, args []interface{}) (interface{}, error)
 		if resResult.Error != nil {
 			return nil, resResult.Error
 		}
-
 		resp := resResult.Data
-		log.Println("Process Cmd:", args, runId, resp)
-
 		if len(resp) == 2 && resp[0] == "ok" {
 			switch cmd {
 			case "set", "del":
@@ -323,16 +320,12 @@ func (c *Client) ProcessCmd(cmd string, args []interface{}) (interface{}, error)
 		}
 		log.Printf("SSDB Client Error Response:%v args:%v Error:%v", resp, args, err)
 		return nil, fmt.Errorf("bad response:%v args:%v", resp, args)
-	} else {
-		return nil, fmt.Errorf("lost connection")
 	}
+	return nil, fmt.Errorf("lost connection")
 }
 
 func (c *Client) Auth(pwd string) (interface{}, error) {
-	//params := []interface{}{pwd}
-	c.process <- []interface{}{"auth", pwd}
-	result := <-c.result
-	return result.Data, result.Error
+	return c.Do("auth", pwd)
 }
 
 func (c *Client) Set(key string, val string) (interface{}, error) {
