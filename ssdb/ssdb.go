@@ -33,6 +33,7 @@ type Client struct {
 }
 
 type ClientResult struct {
+	Id    string
 	Data  []string
 	Error error
 }
@@ -44,7 +45,7 @@ type HashData struct {
 }
 
 var debug bool = true
-var version string = "0.1.4"
+var version string = "0.1.5"
 
 const layout = "2006-01-06 15:04:05"
 
@@ -175,9 +176,11 @@ func (c *Client) CheckError(err error) {
 
 func (c *Client) processDo() {
 	for args := range c.process {
-		result, err := c.do(args)
+		runId := args[0].(string)
+		runArgs := args[1:]
+		result, err := c.do(runArgs)
 		if c.Connected && !c.Retry && !c.Closed {
-			c.result <- ClientResult{Data: result, Error: err}
+			c.result <- ClientResult{Id: runId, Data: result, Error: err}
 		} else {
 			break
 		}
@@ -186,16 +189,29 @@ func (c *Client) processDo() {
 	//log.Println("processDo process channel has closed")
 }
 
+func ArrayAppendToFirst(src []interface{}, dst []interface{}) []interface{} {
+	tmp := src
+	tmp = append(tmp, dst...)
+	return tmp
+}
+
 func (c *Client) Do(args ...interface{}) ([]string, error) {
 	if c.Connected && !c.Retry && !c.Closed {
+		runId := fmt.Sprintf("%d", time.Now().UnixNano())
+		args = ArrayAppendToFirst([]interface{}{runId}, args)
 		c.process <- args
-		result := <-c.result
-		return result.Data, result.Error
+		for result := range c.result {
+			if result.Id == runId {
+				return result.Data, result.Error
+			} else {
+				c.result <- result
+			}
+		}
 	}
 	return nil, fmt.Errorf("Connection has closed.")
 }
 
-func (c *Client) Multi(args ...[]interface{}) ([]string, error) {
+func (c *Client) MultiMode(args [][]interface{}) ([]string, error) {
 	if c.Connected {
 		for _, v := range args {
 			err := c.send(v)
@@ -245,33 +261,24 @@ func (c *Client) do(args []interface{}) ([]string, error) {
 
 func (c *Client) ProcessCmd(cmd string, args []interface{}) (interface{}, error) {
 	if c.Connected {
-		args = append(args, nil)
-		// Use copy to move the upper part of the slice out of the way and open a hole.
-		copy(args[1:], args[0:])
-		// Store the cmd to args
-		args[0] = cmd
-		/*
-			    log.Println("ProcessCmd args:",args,len(args))
-				err := c.send(args)
-				if err != nil {
-					log.Printf("SSDB Client[%s] ProcessCmd Send Error:%v Data:%v\n",c.Id,err,args)
-					c.CheckError(err)
-					return nil, err
-				}
-				resp, err := c.recv()
-				if err != nil {
-					log.Printf("SSDB Client[%s] ProcessCmd Receive Error:%v Data:%v\n",c.Id,err,args)
-					c.CheckError(err)
-					return nil, err
-				}*/
+		args = ArrayAppendToFirst([]interface{}{cmd}, args)
+		runId := fmt.Sprintf("%d", time.Now().UnixNano())
+		args = ArrayAppendToFirst([]interface{}{runId}, args)
+		var err error
 		c.process <- args
-		result := <-c.result
-		err := result.Error
-		if err != nil {
-			return nil, err
+		var resResult ClientResult
+		for result := range c.result {
+			if result.Id == runId {
+				resResult = result
+				break
+			} else {
+				c.result <- result
+			}
 		}
-		resp := result.Data
-
+		if resResult.Error != nil {
+			return nil, resResult.Error
+		}
+		resp := resResult.Data
 		if len(resp) == 2 && resp[0] == "ok" {
 			switch cmd {
 			case "set", "del":
@@ -289,7 +296,7 @@ func (c *Client) ProcessCmd(cmd string, args []interface{}) (interface{}, error)
 			}
 
 		} else if len(resp) == 1 && resp[0] == "not_found" {
-			return nil, nil
+			return nil, fmt.Errorf("%v", resp[0])
 		} else {
 			if len(resp) >= 1 && resp[0] == "ok" {
 				//fmt.Println("Process:",args,resp)
@@ -313,17 +320,12 @@ func (c *Client) ProcessCmd(cmd string, args []interface{}) (interface{}, error)
 		}
 		log.Printf("SSDB Client Error Response:%v args:%v Error:%v", resp, args, err)
 		return nil, fmt.Errorf("bad response:%v args:%v", resp, args)
-	} else {
-		return nil, fmt.Errorf("lost connection")
 	}
+	return nil, fmt.Errorf("lost connection")
 }
 
 func (c *Client) Auth(pwd string) (interface{}, error) {
-	//params := []interface{}{pwd}
-	c.process <- []interface{}{"auth", pwd}
-	result := <-c.result
-	return result.Data, result.Error
-	//return c.ProcessCmd("auth",params)
+	return c.Do("auth", pwd)
 }
 
 func (c *Client) Set(key string, val string) (interface{}, error) {
@@ -809,12 +811,14 @@ func (c *Client) UnZip(data []byte) []string {
 
 // Close The Client Connection
 func (c *Client) Close() error {
-	c.mu.Lock()
-	c.Connected = false
-	c.Closed = true
-	c.mu.Unlock()
-	close(c.process)
-	c.sock.Close()
-	c = nil
+	if !c.Closed {
+		c.mu.Lock()
+		c.Connected = false
+		c.Closed = true
+		c.mu.Unlock()
+		close(c.process)
+		c.sock.Close()
+		c = nil
+	}
 	return nil
 }
