@@ -44,7 +44,7 @@ type HashData struct {
 	Value    string
 }
 
-var debug bool = true
+var debug bool = false
 var version string = "0.1.5"
 
 const layout = "2006-01-06 15:04:05"
@@ -438,6 +438,31 @@ func (c *Client) MultiHashSet(parts []HashData, connNum int) (interface{}, error
 		return nil, errs[0]
 	}
 	return results, nil
+}
+
+func (c *Client) MultiMode(args [][]interface{}) ([]string, error) {
+	if c.Connected {
+		for _, v := range args {
+			err := c.send(v)
+			if err != nil {
+				log.Printf("SSDB Client[%s] Do Send Error:%v Data:%v\n", c.Id, err, args)
+				c.CheckError(err)
+				return nil, err
+			}
+		}
+		var resps []string
+		for i := 0; i < len(args); i++ {
+			resp, err := c.recv()
+			if err != nil {
+				log.Printf("SSDB Client[%s] Do Receive Error:%v Data:%v\n", c.Id, err, args)
+				c.CheckError(err)
+				return nil, err
+			}
+			resps = append(resps, strings.Join(resp, ","))
+		}
+		return resps, nil
+	}
+	return nil, fmt.Errorf("lost connection")
 }
 
 func (c *Client) HashGet(hash string, key string) (interface{}, error) {
