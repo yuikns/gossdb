@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	_ "syscall"
 	"time"
 )
 
@@ -211,31 +212,6 @@ func (c *Client) Do(args ...interface{}) ([]string, error) {
 	return nil, fmt.Errorf("Connection has closed.")
 }
 
-func (c *Client) MultiMode(args [][]interface{}) ([]string, error) {
-	if c.Connected {
-		for _, v := range args {
-			err := c.send(v)
-			if err != nil {
-				log.Printf("SSDB Client[%s] Do Send Error:%v Data:%v\n", c.Id, err, args)
-				c.CheckError(err)
-				return nil, err
-			}
-		}
-		var resps []string
-		for i := 0; i < len(args); i++ {
-			resp, err := c.recv()
-			if err != nil {
-				log.Printf("SSDB Client[%s] Do Receive Error:%v Data:%v\n", c.Id, err, args)
-				c.CheckError(err)
-				return nil, err
-			}
-			resps = append(resps, strings.Join(resp, ","))
-		}
-		return resps, nil
-	}
-	return nil, fmt.Errorf("lost connection")
-}
-
 func (c *Client) do(args []interface{}) ([]string, error) {
 	if c.Connected {
 		err := c.send(args)
@@ -278,6 +254,7 @@ func (c *Client) ProcessCmd(cmd string, args []interface{}) (interface{}, error)
 		if resResult.Error != nil {
 			return nil, resResult.Error
 		}
+
 		resp := resResult.Data
 		if len(resp) == 2 && resp[0] == "ok" {
 			switch cmd {
@@ -320,12 +297,14 @@ func (c *Client) ProcessCmd(cmd string, args []interface{}) (interface{}, error)
 		}
 		log.Printf("SSDB Client Error Response:%v args:%v Error:%v", resp, args, err)
 		return nil, fmt.Errorf("bad response:%v args:%v", resp, args)
+	} else {
+		return nil, fmt.Errorf("lost connection")
 	}
-	return nil, fmt.Errorf("lost connection")
 }
 
 func (c *Client) Auth(pwd string) (interface{}, error) {
 	return c.Do("auth", pwd)
+	//return c.ProcessCmd("auth",params)
 }
 
 func (c *Client) Set(key string, val string) (interface{}, error) {
