@@ -96,9 +96,7 @@ func (c *Client) Connect() error {
 	c.sock = sock
 	c.Connected = true
 	if c.Retry {
-		if debug {
-			log.Printf("Client[%s] Retry connect to %s:%d success.", c.Id, c.Ip, c.Port)
-		}
+		log.Printf("Client[%s] Retry connect to %s:%d success.", c.Id, c.Ip, c.Port)
 	}
 	c.Retry = false
 	c.process = make(chan []interface{})
@@ -135,22 +133,17 @@ func (c *Client) HealthCheck() {
 }
 
 func (c *Client) RetryConnect() {
-	c.mu.Lock()
-	Retry := false
 	if !c.Retry {
+		c.mu.Lock()
 		c.Retry = true
-		Retry = true
 		c.Connected = false
-	}
-	c.mu.Unlock()
-	if Retry {
+		c.mu.Unlock()
 		log.Printf("Client[%s] Retry connect to %s:%d\n", c.Id, c.Ip, c.Port)
-
-		time.Sleep(2 * time.Second)
 		for {
 			if !c.Connected && !c.Closed {
 				err := c.Connect()
 				if err != nil {
+					log.Printf("Client[%s] Retry connect to %s:%d Failed. Error:%v\n", c.Id, c.Ip, c.Port, err)
 					time.Sleep(10 * time.Second)
 				} else {
 					break
