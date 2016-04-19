@@ -5,7 +5,7 @@ import (
 	"compress/gzip"
 	"encoding/base64"
 	"fmt"
-	"io"
+	_ "io"
 	"io/ioutil"
 	"log"
 	"math"
@@ -31,6 +31,7 @@ type Client struct {
 	Retry     bool
 	mu        *sync.Mutex
 	Closed    bool
+	init      bool
 }
 
 type ClientResult struct {
@@ -99,9 +100,13 @@ func (c *Client) Connect() error {
 		log.Printf("Client[%s] Retry connect to %s:%d success.", c.Id, c.Ip, c.Port)
 	}
 	c.Retry = false
-	c.process = make(chan []interface{})
-	c.result = make(chan ClientResult)
-	go c.processDo()
+	if !c.init {
+		c.process = make(chan []interface{})
+		c.result = make(chan ClientResult)
+		go c.processDo()
+		c.init = true
+	}
+
 	if c.Password != "" {
 		c.Auth(c.Password)
 	}
@@ -138,13 +143,14 @@ func (c *Client) RetryConnect() {
 		c.Retry = true
 		c.Connected = false
 		c.mu.Unlock()
-		log.Printf("Client[%s] Retry connect to %s:%d\n", c.Id, c.Ip, c.Port)
+		log.Printf("Client[%s] Retry connect to %s:%d Connected:%v Closed:%v\n", c.Id, c.Ip, c.Port, c.Connected, c.Closed)
 		for {
 			if !c.Connected && !c.Closed {
+				log.Printf("Client[%s] retry connect to %s:%d\n", c.Id, c.Ip, c.Port)
 				err := c.Connect()
 				if err != nil {
 					log.Printf("Client[%s] Retry connect to %s:%d Failed. Error:%v\n", c.Id, c.Ip, c.Port, err)
-					time.Sleep(10 * time.Second)
+					time.Sleep(5 * time.Second)
 				} else {
 					break
 				}
@@ -157,8 +163,8 @@ func (c *Client) RetryConnect() {
 }
 
 func (c *Client) CheckError(err error) {
-	if err == io.EOF || strings.Contains(err.Error(), "connection") || strings.Contains(err.Error(), "timed out") || strings.Contains(err.Error(), "route") {
-
+	//if err == io.EOF || strings.Contains(err.Error(), "connection") || strings.Contains(err.Error(), "timed out") || strings.Contains(err.Error(), "route") {
+	if err != nil {
 		if !c.Closed {
 			log.Printf("Check Error:%v Retry connect.\n", err)
 			c.sock.Close()
@@ -173,11 +179,12 @@ func (c *Client) processDo() {
 		runId := args[0].(string)
 		runArgs := args[1:]
 		result, err := c.do(runArgs)
-		if c.Connected && !c.Retry && !c.Closed {
+		c.result <- ClientResult{Id: runId, Data: result, Error: err}
+		/*if c.Connected && !c.Retry && !c.Closed {
 			c.result <- ClientResult{Id: runId, Data: result, Error: err}
 		} else {
-			break
-		}
+			time.Sleep(1 * time.Second)
+		}*/
 	}
 	//close(c.result)
 	//log.Println("processDo process channel has closed")
