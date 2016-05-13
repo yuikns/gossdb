@@ -19,7 +19,7 @@ import (
 )
 
 type Client struct {
-	sock      *net.TCPConn
+	sock      net.Conn
 	recv_buf  bytes.Buffer
 	process   chan []interface{}
 	result    chan ClientResult
@@ -47,7 +47,7 @@ type HashData struct {
 }
 
 var debug bool = false
-var version string = "0.1.5"
+var version string = "0.1.6"
 
 const layout = "2006-01-06 15:04:05"
 
@@ -67,6 +67,7 @@ func Connect(ip string, port int, auth string) (*Client, error) {
 }
 
 func connect(ip string, port int, auth string) (*Client, error) {
+	log.Printf("SSDB Client Version:%s\n", version)
 	var c Client
 	c.Ip = ip
 	c.Port = port
@@ -84,20 +85,30 @@ func (c *Client) Debug(flag bool) bool {
 }
 
 func (c *Client) Connect() error {
-	addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", c.Ip, c.Port))
+	log.Printf("Client[%s] connect to %s:%d\n", c.Id, c.Ip, c.Port)
+	/*addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", c.Ip, c.Port))
 	if err != nil {
 		log.Println("Client ResolveTCPAddr failed:", err)
 		return err
-	}
-	sock, err := net.DialTCP("tcp", nil, addr)
+	}*/
+	seconds := 60
+	timeOut := time.Duration(seconds) * time.Second
+	sock, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", c.Ip, c.Port), timeOut)
 	if err != nil {
 		log.Println("SSDB Client dial failed:", err, c.Id)
 		return err
 	}
+	/*sock, err := net.DialTCP("tcp", nil, addr)
+	if err != nil {
+		log.Println("SSDB Client dial failed:", err, c.Id)
+		return err
+	}*/
 	c.sock = sock
 	c.Connected = true
 	if c.Retry {
-		log.Printf("Client[%s] Retry connect to %s:%d success.", c.Id, c.Ip, c.Port)
+		log.Printf("Client[%s] retry connect to %s:%d success.", c.Id, c.Ip, c.Port)
+	} else {
+		log.Printf("Client[%s] connect to %s:%d success\n", c.Id, c.Ip, c.Port)
 	}
 	c.Retry = false
 	if !c.init {
@@ -143,7 +154,7 @@ func (c *Client) RetryConnect() {
 		c.Retry = true
 		c.Connected = false
 		c.mu.Unlock()
-		log.Printf("Client[%s] Retry connect to %s:%d Connected:%v Closed:%v\n", c.Id, c.Ip, c.Port, c.Connected, c.Closed)
+		log.Printf("Client[%s] retry connect to %s:%d Connected:%v Closed:%v\n", c.Id, c.Ip, c.Port, c.Connected, c.Closed)
 		for {
 			if !c.Connected && !c.Closed {
 				log.Printf("Client[%s] retry connect to %s:%d\n", c.Id, c.Ip, c.Port)
@@ -151,8 +162,6 @@ func (c *Client) RetryConnect() {
 				if err != nil {
 					log.Printf("Client[%s] Retry connect to %s:%d Failed. Error:%v\n", c.Id, c.Ip, c.Port, err)
 					time.Sleep(5 * time.Second)
-				} else {
-					break
 				}
 			} else {
 				log.Printf("Client[%s] Retry connect to %s:%d stop by conn:%v closed:%v\n.", c.Id, c.Ip, c.Port, c.Connected, c.Closed)
