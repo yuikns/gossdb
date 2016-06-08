@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	_ "io"
 	"io/ioutil"
@@ -22,6 +23,7 @@ type Client struct {
 	sock      net.Conn
 	recv_buf  bytes.Buffer
 	process   chan []interface{}
+	batchBuf  [][]interface{}
 	result    chan ClientResult
 	Id        string
 	Ip        string
@@ -216,6 +218,46 @@ func (c *Client) Do(args ...interface{}) ([]string, error) {
 			} else {
 				c.result <- result
 			}
+		}
+	}
+	return nil, fmt.Errorf("Connection has closed.")
+}
+
+func (c *Client) BatchAppend(args ...interface{}) {
+	c.batchBuf = append(c.batchBuf, args)
+}
+
+func (c *Client) Exec() ([][]string, error) {
+	if c.Connected && !c.Retry && !c.Closed {
+		if len(c.batchBuf) > 0 {
+			runId := fmt.Sprintf("%d", time.Now().UnixNano())
+			jsonStr, err := json.Marshal(&c.batchBuf)
+			if err != nil {
+				return [][]string{}, fmt.Errorf("Exec Json Error:%v", err)
+			}
+			args := []interface{}{"batchexec", string(jsonStr)}
+			args = ArrayAppendToFirst([]interface{}{runId}, args)
+			c.batchBuf = c.batchBuf[:0]
+			c.process <- args
+			for result := range c.result {
+				if result.Id == runId {
+					if len(result.Data) == 2 && result.Data[0] == "ok" {
+						var resp [][]string
+						err := json.Unmarshal([]byte(result.Data[1]), &resp)
+						if err != nil {
+							return [][]string{}, fmt.Errorf("Batch Json Error:%v", err)
+						}
+						return resp, result.Error
+					} else {
+						return [][]string{}, result.Error
+					}
+
+				} else {
+					c.result <- result
+				}
+			}
+		} else {
+			return [][]string{}, fmt.Errorf("Batch Exec Error:No Batch Command found.")
 		}
 	}
 	return nil, fmt.Errorf("Connection has closed.")
