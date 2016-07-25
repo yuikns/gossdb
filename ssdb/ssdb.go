@@ -34,7 +34,7 @@ type Client struct {
 	mu        *sync.Mutex
 	Closed    bool
 	init      bool
-	Zip       bool
+	zip       bool
 }
 
 type ClientResult struct {
@@ -50,7 +50,7 @@ type HashData struct {
 }
 
 var debug bool = false
-var version string = "0.1.6"
+var version string = "0.1.8"
 
 const layout = "2006-01-06 15:04:05"
 
@@ -88,8 +88,8 @@ func (c *Client) Debug(flag bool) bool {
 }
 
 func (c *Client) UseZip(flag bool) {
-	c.Zip = flag
-	log.Println("SSDB Client Zip Mode:", c.Zip)
+	c.zip = flag
+	log.Println("SSDB Client Zip Mode:", c.zip)
 }
 
 func (c *Client) Connect() error {
@@ -588,7 +588,6 @@ func (c *Client) HashGetAll(hash string) (map[string]string, error) {
 	} else {
 		return val.(map[string]string), err
 	}
-
 	return nil, nil
 }
 
@@ -705,9 +704,18 @@ func (c *Client) HashClear(hash string) (interface{}, error) {
 	return c.ProcessCmd("hclear", params)
 }
 
+func (c *Client) Zip(data string) string {
+	var zipbuf bytes.Buffer
+	w := gzip.NewWriter(&zipbuf)
+	w.Write([]byte(data))
+	w.Close()
+	zipbuff := base64.StdEncoding.EncodeToString(zipbuf.Bytes())
+	return zipbuff
+}
+
 func (c *Client) Send(args []interface{}) error {
 	var buf bytes.Buffer
-	if c.Zip {
+	if c.zip {
 		buf.WriteString("3")
 		buf.WriteByte('\n')
 		buf.WriteString("zip")
@@ -855,7 +863,7 @@ func (c *Client) Recv() ([]string, error) {
 }
 
 func (c *Client) recv() ([]string, error) {
-	tmp := make([]byte, 102400)
+	var tmp [102400]byte
 	for {
 		resp := c.parse()
 		if resp == nil || len(resp) > 0 {
@@ -866,7 +874,7 @@ func (c *Client) recv() ([]string, error) {
 				if err != nil {
 					return nil, err
 				}
-				resp = c.UnZip(zipData)
+				resp = c.tranfUnZip(zipData)
 			}
 			return resp, nil
 		}
@@ -922,7 +930,8 @@ func (c *Client) parse() []string {
 	return []string{}
 }
 
-func (c *Client) UnZip(data []byte) []string {
+//this function for transfer data only use.
+func (c *Client) tranfUnZip(data []byte) []string {
 	var buf bytes.Buffer
 	buf.Write(data)
 	zipReader, err := gzip.NewReader(&buf)
@@ -964,6 +973,26 @@ func (c *Client) UnZip(data []byte) []string {
 		}
 	}
 	return resp
+}
+
+func (c *Client) UnZip(data []byte) string {
+	var buf bytes.Buffer
+	buf.Write(data)
+	zipReader, err := gzip.NewReader(&buf)
+	if err != nil {
+		log.Println("[ERROR] New gzip reader:", err)
+	}
+	defer zipReader.Close()
+
+	zipData, err := ioutil.ReadAll(zipReader)
+	if err != nil {
+		fmt.Println("[ERROR] ReadAll:", err)
+		return ""
+	}
+	if zipData != nil {
+		return string(zipData)
+	}
+	return ""
 }
 
 // Close The Client Connection
