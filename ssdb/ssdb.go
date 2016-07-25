@@ -704,10 +704,10 @@ func (c *Client) HashClear(hash string) (interface{}, error) {
 	return c.ProcessCmd("hclear", params)
 }
 
-func (c *Client) Zip(data string) string {
+func (c *Client) Zip(data []byte) string {
 	var zipbuf bytes.Buffer
 	w := gzip.NewWriter(&zipbuf)
-	w.Write([]byte(data))
+	w.Write(data)
 	w.Close()
 	zipbuff := base64.StdEncoding.EncodeToString(zipbuf.Bytes())
 	return zipbuff
@@ -975,11 +975,11 @@ func (c *Client) tranfUnZip(data []byte) []string {
 	return resp
 }
 
-func (c *Client) UnZip(data string) (string, error) {
+func (c *Client) UnZip(data string) ([]byte, error) {
 	var buf bytes.Buffer
 	zipData, err := base64.StdEncoding.DecodeString(data)
 	if err != nil {
-		return "", err
+		return []byte{}, err
 	}
 	buf.Write(zipData)
 	zipReader, err := gzip.NewReader(&buf)
@@ -991,12 +991,9 @@ func (c *Client) UnZip(data string) (string, error) {
 	unzipData, err := ioutil.ReadAll(zipReader)
 	if err != nil {
 		fmt.Println("[ERROR] ReadAll:", err)
-		return "", err
+		return []byte{}, err
 	}
-	if unzipData != nil {
-		return string(unzipData), nil
-	}
-	return "", nil
+	return unzipData, nil
 }
 
 // Close The Client Connection
