@@ -975,24 +975,28 @@ func (c *Client) tranfUnZip(data []byte) []string {
 	return resp
 }
 
-func (c *Client) UnZip(data []byte) string {
+func (c *Client) UnZip(data string) (string, error) {
 	var buf bytes.Buffer
-	buf.Write(data)
+	zipData, err := base64.StdEncoding.DecodeString(data)
+	if err != nil {
+		return "", err
+	}
+	buf.Write(zipData)
 	zipReader, err := gzip.NewReader(&buf)
 	if err != nil {
 		log.Println("[ERROR] New gzip reader:", err)
 	}
 	defer zipReader.Close()
 
-	zipData, err := ioutil.ReadAll(zipReader)
+	unzipData, err := ioutil.ReadAll(zipReader)
 	if err != nil {
 		fmt.Println("[ERROR] ReadAll:", err)
-		return ""
+		return "", err
 	}
-	if zipData != nil {
-		return string(zipData)
+	if unzipData != nil {
+		return string(unzipData), nil
 	}
-	return ""
+	return "", nil
 }
 
 // Close The Client Connection
