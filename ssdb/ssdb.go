@@ -70,7 +70,7 @@ func Connect(ip string, port int, auth string) (*Client, error) {
 }
 
 func connect(ip string, port int, auth string) (*Client, error) {
-	log.Printf("SSDB Client Version:%s\n", version)
+	//log.Printf("SSDB Client Version:%s\n", version)
 	var c Client
 	c.Ip = ip
 	c.Port = port
@@ -93,7 +93,7 @@ func (c *Client) UseZip(flag bool) {
 }
 
 func (c *Client) Connect() error {
-	log.Printf("Client[%s] connect to %s:%d\n", c.Id, c.Ip, c.Port)
+	//log.Printf("Client[%s] connect to %s:%d\n", c.Id, c.Ip, c.Port)
 	/*addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", c.Ip, c.Port))
 	if err != nil {
 		log.Println("Client ResolveTCPAddr failed:", err)
@@ -237,6 +237,7 @@ func (c *Client) Exec() ([][]string, error) {
 	if c.Connected && !c.Retry && !c.Closed {
 		if len(c.batchBuf) > 0 {
 			runId := fmt.Sprintf("%d", time.Now().UnixNano())
+			firstElement := c.batchBuf[0]
 			jsonStr, err := json.Marshal(&c.batchBuf)
 			if err != nil {
 				return [][]string{}, fmt.Errorf("Exec Json Error:%v", err)
@@ -249,9 +250,11 @@ func (c *Client) Exec() ([][]string, error) {
 				if result.Id == runId {
 					if len(result.Data) == 2 && result.Data[0] == "ok" {
 						var resp [][]string
-						err := json.Unmarshal([]byte(result.Data[1]), &resp)
-						if err != nil {
-							return [][]string{}, fmt.Errorf("Batch Json Error:%v", err)
+						if firstElement[0] != "async" {
+							err := json.Unmarshal([]byte(result.Data[1]), &resp)
+							if err != nil {
+								return [][]string{}, fmt.Errorf("Batch Json Error:%v", err)
+							}
 						}
 						return resp, result.Error
 					} else {
@@ -993,6 +996,7 @@ func (c *Client) UnZip(data string) ([]byte, error) {
 		fmt.Println("[ERROR] ReadAll:", err)
 		return []byte{}, err
 	}
+	buf.Reset()
 	return unzipData, nil
 }
 
@@ -1003,6 +1007,7 @@ func (c *Client) Close() error {
 		c.Connected = false
 		c.Closed = true
 		c.mu.Unlock()
+		time.Sleep(60 * time.Second)
 		close(c.process)
 		c.sock.Close()
 		c = nil
