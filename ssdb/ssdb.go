@@ -197,6 +197,11 @@ func (c *Client) processDo() {
 		runArgs := args[1:]
 		result, err := c.do(runArgs)
 		c.result <- ClientResult{Id: runId, Data: result, Error: err}
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Println("Recovered in processDo", r)
+			}
+		}()
 		/*if c.Connected && !c.Retry && !c.Closed {
 			c.result <- ClientResult{Id: runId, Data: result, Error: err}
 		} else {
@@ -218,6 +223,7 @@ func (c *Client) Do(args ...interface{}) ([]string, error) {
 		runId := fmt.Sprintf("%d", time.Now().UnixNano())
 		args = ArrayAppendToFirst([]interface{}{runId}, args)
 		c.process <- args
+
 		for result := range c.result {
 			if result.Id == runId {
 				return result.Data, result.Error
@@ -225,6 +231,11 @@ func (c *Client) Do(args ...interface{}) ([]string, error) {
 				c.result <- result
 			}
 		}
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Println("Recovered in Do", r)
+			}
+		}()
 	}
 	return nil, fmt.Errorf("Connection has closed.")
 }
@@ -269,6 +280,11 @@ func (c *Client) Exec() ([][]string, error) {
 			return [][]string{}, fmt.Errorf("Batch Exec Error:No Batch Command found.")
 		}
 	}
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println("Recovered in Exec", r)
+		}
+	}()
 	return nil, fmt.Errorf("Connection has closed.")
 }
 
@@ -309,8 +325,14 @@ func (c *Client) ProcessCmd(cmd string, args []interface{}) (interface{}, error)
 				break
 			} else {
 				c.result <- result
+
 			}
 		}
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Println("Recovered in ProcessCmd", r)
+			}
+		}()
 		if resResult.Error != nil {
 			return nil, resResult.Error
 		}
@@ -1006,9 +1028,8 @@ func (c *Client) Close() error {
 		c.mu.Lock()
 		c.Connected = false
 		c.Closed = true
-		c.sock.Close()
 		c.mu.Unlock()
-		time.Sleep(60 * time.Second)
+		c.sock.Close()
 		close(c.process)
 		c = nil
 	}
