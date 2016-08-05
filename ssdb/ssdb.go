@@ -1006,10 +1006,10 @@ func (c *Client) Close() error {
 		c.mu.Lock()
 		c.Connected = false
 		c.Closed = true
+		c.sock.Close()
 		c.mu.Unlock()
 		time.Sleep(60 * time.Second)
 		close(c.process)
-		c.sock.Close()
 		c = nil
 	}
 	return nil
