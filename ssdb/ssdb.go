@@ -116,7 +116,7 @@ func (c *Client) Connect() error {
 	if c.Retry {
 		log.Printf("Client[%s] retry connect to %s:%d success.", c.Id, c.Ip, c.Port)
 	} else {
-		log.Printf("Client[%s] connect to %s:%d success\n", c.Id, c.Ip, c.Port)
+		log.Printf("Client[%s] connect to %s:%d success. Info:%v\n", c.Id, c.Ip, c.Port, c.sock.LocalAddr())
 	}
 	c.Retry = false
 	if !c.init {
@@ -138,11 +138,11 @@ func (c *Client) KeepAlive() {
 }
 
 func (c *Client) HealthCheck() {
-	timeout := 60
+	timeout := 30
 	//wait client connect to server
 	//time.Sleep(5 * time.Second)
 	for {
-		if c.Connected && !c.Retry && !c.Closed {
+		if c != nil && c.Connected && !c.Retry && !c.Closed {
 			result, err := c.Do("ping")
 			if err != nil {
 				log.Printf("Client Health Check Failed[%s]:%v\n", c.Id, err)
@@ -202,7 +202,7 @@ func (c *Client) processDo() {
 				fmt.Println("Recovered in processDo", r)
 			}
 		}()
-		/*if c.Connected && !c.Retry && !c.Closed {
+		/*if c != nil && c.Connected && !c.Retry && !c.Closed {
 			c.result <- ClientResult{Id: runId, Data: result, Error: err}
 		} else {
 			time.Sleep(1 * time.Second)
@@ -219,11 +219,15 @@ func ArrayAppendToFirst(src []interface{}, dst []interface{}) []interface{} {
 }
 
 func (c *Client) Do(args ...interface{}) ([]string, error) {
-	if c.Connected && !c.Retry && !c.Closed {
+	if c != nil && c.Connected && !c.Retry && !c.Closed {
 		runId := fmt.Sprintf("%d", time.Now().UnixNano())
 		args = ArrayAppendToFirst([]interface{}{runId}, args)
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Println("Recovered in Do", r)
+			}
+		}()
 		c.process <- args
-
 		for result := range c.result {
 			if result.Id == runId {
 				return result.Data, result.Error
@@ -231,21 +235,23 @@ func (c *Client) Do(args ...interface{}) ([]string, error) {
 				c.result <- result
 			}
 		}
-		defer func() {
-			if r := recover(); r != nil {
-				fmt.Println("Recovered in Do", r)
-			}
-		}()
 	}
 	return nil, fmt.Errorf("Connection has closed.")
 }
 
 func (c *Client) BatchAppend(args ...interface{}) {
-	c.batchBuf = append(c.batchBuf, args)
+	if c != nil && c.Connected && !c.Retry && !c.Closed {
+		c.batchBuf = append(c.batchBuf, args)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println("Recovered in BatchAppend", r)
+		}
+	}()
 }
 
 func (c *Client) Exec() ([][]string, error) {
-	if c.Connected && !c.Retry && !c.Closed {
+	if c != nil && c.Connected && !c.Retry && !c.Closed {
 		if len(c.batchBuf) > 0 {
 			runId := fmt.Sprintf("%d", time.Now().UnixNano())
 			firstElement := c.batchBuf[0]
@@ -1024,14 +1030,23 @@ func (c *Client) UnZip(data string) ([]byte, error) {
 
 // Close The Client Connection
 func (c *Client) Close() error {
-	if !c.Closed {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Println("Recovered in Close", r)
+		}
+	}()
+	if c != nil && !c.Closed {
 		c.mu.Lock()
 		c.Connected = false
 		c.Closed = true
 		c.mu.Unlock()
+		if c.process != nil {
+			close(c.process)
+		}
 		c.sock.Close()
-		close(c.process)
+		log.Printf("Connection close:%v Addr:%v\n", c.Id, c.sock.LocalAddr())
 		c = nil
 	}
+
 	return nil
 }
