@@ -2,12 +2,10 @@ package ssdb
 
 import (
 	"bytes"
-	"compress/gzip"
-	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	_ "io"
-	"io/ioutil"
 	"log"
 	"math"
 	"net"
@@ -34,7 +32,6 @@ type Client struct {
 	mu        *sync.Mutex
 	Closed    bool
 	init      bool
-	zip       bool
 }
 
 type ClientResult struct {
@@ -49,10 +46,23 @@ type HashData struct {
 	Value    string
 }
 
+type QueueData struct {
+	QueueName string
+	Key       string
+	Value     string
+}
+
+type ZData struct {
+	ZName string
+	Key   string
+	Value int64
+}
+
 var debug bool = false
 var version string = "0.1.8"
 
-const layout = "2006-01-06 15:04:05"
+// what's this?
+// const layout = "2006-01-06 15:04:05"
 
 func Connect(ip string, port int, auth string) (*Client, error) {
 	client, err := connect(ip, port, auth)
@@ -70,7 +80,7 @@ func Connect(ip string, port int, auth string) (*Client, error) {
 }
 
 func connect(ip string, port int, auth string) (*Client, error) {
-	//log.Printf("SSDB Client Version:%s\n", version)
+	log.Printf("SSDB Client Version:%s\n", version)
 	var c Client
 	c.Ip = ip
 	c.Port = port
@@ -87,18 +97,13 @@ func (c *Client) Debug(flag bool) bool {
 	return debug
 }
 
-func (c *Client) UseZip(flag bool) {
-	c.zip = flag
-	log.Println("SSDB Client Zip Mode:", c.zip)
-}
-
 func (c *Client) Connect() error {
 	//log.Printf("Client[%s] connect to %s:%d\n", c.Id, c.Ip, c.Port)
-	/*addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", c.Ip, c.Port))
-	if err != nil {
-		log.Println("Client ResolveTCPAddr failed:", err)
-		return err
-	}*/
+	//addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", c.Ip, c.Port))
+	//if err != nil {
+	//	log.Println("Client ResolveTCPAddr failed:", err)
+	//	return err
+	//}
 	seconds := 60
 	timeOut := time.Duration(seconds) * time.Second
 	sock, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", c.Ip, c.Port), timeOut)
@@ -106,11 +111,11 @@ func (c *Client) Connect() error {
 		log.Println("SSDB Client dial failed:", err, c.Id)
 		return err
 	}
-	/*sock, err := net.DialTCP("tcp", nil, addr)
-	if err != nil {
-		log.Println("SSDB Client dial failed:", err, c.Id)
-		return err
-	}*/
+	//sock, err := net.DialTCP("tcp", nil, addr)
+	//if err != nil {
+	//	log.Println("SSDB Client dial failed:", err, c.Id)
+	//	return err
+	//}
 	c.sock = sock
 	c.Connected = true
 	if c.Retry {
@@ -162,17 +167,20 @@ func (c *Client) RetryConnect() {
 		c.Retry = true
 		c.Connected = false
 		c.mu.Unlock()
-		log.Printf("Client[%s] retry connect to %s:%d Connected:%v Closed:%v\n", c.Id, c.Ip, c.Port, c.Connected, c.Closed)
+		log.Printf("Client[%s] retry connect to %s:%d Connected:%v Closed:%v\n",
+			c.Id, c.Ip, c.Port, c.Connected, c.Closed)
 		for {
 			if !c.Connected && !c.Closed {
 				log.Printf("Client[%s] retry connect to %s:%d\n", c.Id, c.Ip, c.Port)
 				err := c.Connect()
 				if err != nil {
-					log.Printf("Client[%s] Retry connect to %s:%d Failed. Error:%v\n", c.Id, c.Ip, c.Port, err)
+					log.Printf("Client[%s] Retry connect to %s:%d Failed. Error:%v\n",
+						c.Id, c.Ip, c.Port, err)
 					time.Sleep(5 * time.Second)
 				}
 			} else {
-				log.Printf("Client[%s] Retry connect to %s:%d stop by conn:%v closed:%v\n.", c.Id, c.Ip, c.Port, c.Connected, c.Closed)
+				log.Printf("Client[%s] Retry connect to %s:%d stop by conn:%v closed:%v\n.",
+					c.Id, c.Ip, c.Port, c.Connected, c.Closed)
 				break
 			}
 		}
@@ -180,7 +188,8 @@ func (c *Client) RetryConnect() {
 }
 
 func (c *Client) CheckError(err error) {
-	//if err == io.EOF || strings.Contains(err.Error(), "connection") || strings.Contains(err.Error(), "timed out") || strings.Contains(err.Error(), "route") {
+	//if err == io.EOF || strings.Contains(err.Error(), "connection") ||
+	// strings.Contains(err.Error(), "timed out") || strings.Contains(err.Error(), "route") {
 	if err != nil {
 		if !c.Closed {
 			log.Printf("Check Error:%v Retry connect.\n", err)
@@ -236,7 +245,7 @@ func (c *Client) Do(args ...interface{}) ([]string, error) {
 			}
 		}
 	}
-	return nil, fmt.Errorf("Connection has closed.")
+	return nil, errors.New("Connection has closed.")
 }
 
 func (c *Client) BatchAppend(args ...interface{}) {
@@ -283,7 +292,7 @@ func (c *Client) Exec() ([][]string, error) {
 				}
 			}
 		} else {
-			return [][]string{}, fmt.Errorf("Batch Exec Error:No Batch Command found.")
+			return [][]string{}, errors.New("Batch Exec Error:No Batch Command found.")
 		}
 	}
 	defer func() {
@@ -291,7 +300,7 @@ func (c *Client) Exec() ([][]string, error) {
 			fmt.Println("Recovered in Exec", r)
 		}
 	}()
-	return nil, fmt.Errorf("Connection has closed.")
+	return nil, errors.New("Connection has closed.")
 }
 
 func (c *Client) do(args []interface{}) ([]string, error) {
@@ -314,7 +323,7 @@ func (c *Client) do(args []interface{}) ([]string, error) {
 		}
 		return resp, nil
 	}
-	return nil, fmt.Errorf("lost connection")
+	return nil, errors.New("lost connection")
 }
 
 func (c *Client) ProcessCmd(cmd string, args []interface{}) (interface{}, error) {
@@ -353,7 +362,7 @@ func (c *Client) ProcessCmd(cmd string, args []interface{}) (interface{}, error)
 					return true, nil
 				}
 				return false, nil
-			case "hsize":
+			case "hsize", "zsize", "qsize":
 				val, err := strconv.ParseInt(resp[1], 10, 64)
 				return val, err
 			default:
@@ -386,7 +395,7 @@ func (c *Client) ProcessCmd(cmd string, args []interface{}) (interface{}, error)
 		log.Printf("SSDB Client Error Response:%v args:%v Error:%v", resp, args, err)
 		return nil, fmt.Errorf("bad response:%v args:%v", resp, args)
 	} else {
-		return nil, fmt.Errorf("lost connection")
+		return nil, errors.New("lost connection")
 	}
 }
 
@@ -495,7 +504,6 @@ func (c *Client) MultiHashSet(parts []HashData, connNum int) (interface{}, error
 		} else {
 			go conHelper(parts[p*(i-1):p*i], &wg, privatePool[i-1], results, errs)
 		}
-
 	}
 	wg.Wait()
 	for _, c := range privatePool[:connNum-1] {
@@ -529,7 +537,7 @@ func (c *Client) MultiMode(args [][]interface{}) ([]string, error) {
 		}
 		return resps, nil
 	}
-	return nil, fmt.Errorf("lost connection")
+	return nil, errors.New("lost connection")
 }
 
 func (c *Client) HashGet(hash string, key string) (interface{}, error) {
@@ -735,114 +743,8 @@ func (c *Client) HashClear(hash string) (interface{}, error) {
 	return c.ProcessCmd("hclear", params)
 }
 
-func (c *Client) Zip(data []byte) string {
-	var zipbuf bytes.Buffer
-	w := gzip.NewWriter(&zipbuf)
-	w.Write(data)
-	w.Close()
-	zipbuff := base64.StdEncoding.EncodeToString(zipbuf.Bytes())
-	return zipbuff
-}
-
 func (c *Client) Send(args []interface{}) error {
-	var buf bytes.Buffer
-	if c.zip {
-		buf.WriteString("3")
-		buf.WriteByte('\n')
-		buf.WriteString("zip")
-		buf.WriteByte('\n')
-		var zipbuf bytes.Buffer
-		w := gzip.NewWriter(&zipbuf)
-		for _, arg := range args {
-			var s string
-			switch arg := arg.(type) {
-			case string:
-				s = arg
-			case []byte:
-				s = string(arg)
-			case []string:
-				for _, s := range arg {
-					w.Write([]byte(fmt.Sprintf("%d", len(s))))
-					w.Write([]byte("\n"))
-					w.Write([]byte(s))
-					w.Write([]byte("\n"))
-				}
-				continue
-			case int:
-				s = fmt.Sprintf("%d", arg)
-			case int64:
-				s = fmt.Sprintf("%d", arg)
-			case float64:
-				s = fmt.Sprintf("%f", arg)
-			case bool:
-				if arg {
-					s = "1"
-				} else {
-					s = "0"
-				}
-			case nil:
-				s = ""
-			default:
-				return fmt.Errorf("bad arguments")
-			}
-			w.Write([]byte(fmt.Sprintf("%d", len(s))))
-			w.Write([]byte("\n"))
-			w.Write([]byte(s))
-			w.Write([]byte("\n"))
-		}
-		w.Close()
-		zipbuff := base64.StdEncoding.EncodeToString(zipbuf.Bytes())
-		buf.WriteString(fmt.Sprintf("%d", len(zipbuff)))
-		buf.WriteByte('\n')
-		buf.WriteString(zipbuff)
-		buf.WriteByte('\n')
-		buf.WriteByte('\n')
-	} else {
-		for _, arg := range args {
-			var s string
-			switch arg := arg.(type) {
-			case string:
-				s = arg
-			case []byte:
-				s = string(arg)
-			case []string:
-				for _, s := range arg {
-					buf.WriteString(fmt.Sprintf("%d", len(s)))
-					buf.WriteByte('\n')
-					_, err := buf.WriteString(s)
-					if err != nil {
-						log.Println("Write String Error:", err)
-					}
-					buf.WriteByte('\n')
-				}
-				continue
-			case int:
-				s = fmt.Sprintf("%d", arg)
-			case int64:
-				s = fmt.Sprintf("%d", arg)
-			case float64:
-				s = fmt.Sprintf("%f", arg)
-			case bool:
-				if arg {
-					s = "1"
-				} else {
-					s = "0"
-				}
-			case nil:
-				s = ""
-			default:
-				return fmt.Errorf("bad arguments")
-			}
-			buf.WriteString(fmt.Sprintf("%d", len(s)))
-			buf.WriteByte('\n')
-			buf.WriteString(s)
-			buf.WriteByte('\n')
-		}
-		buf.WriteByte('\n')
-	}
-	tmpBuf := buf.Bytes()
-	_, err := c.sock.Write(tmpBuf)
-	return err
+	return c.send(args)
 }
 
 func (c *Client) send(args []interface{}) error {
@@ -877,7 +779,7 @@ func (c *Client) send(args []interface{}) error {
 		case nil:
 			s = ""
 		default:
-			return fmt.Errorf("bad arguments")
+			return errors.New("bad arguments")
 		}
 		buf.WriteString(fmt.Sprintf("%d", len(s)))
 		buf.WriteByte('\n')
@@ -899,14 +801,14 @@ func (c *Client) recv() ([]string, error) {
 		resp := c.parse()
 		if resp == nil || len(resp) > 0 {
 			//log.Println("SSDB Receive:",resp)
-			if len(resp) > 0 && resp[0] == "zip" {
-				//log.Println("SSDB Receive Zip\n",resp)
-				zipData, err := base64.StdEncoding.DecodeString(resp[1])
-				if err != nil {
-					return nil, err
-				}
-				resp = c.tranfUnZip(zipData)
-			}
+			//if len(resp) > 0 && resp[0] == "zip" {
+			//	//log.Println("SSDB Receive Zip\n",resp)
+			//	zipData, err := base64.StdEncoding.DecodeString(resp[1])
+			//	if err != nil {
+			//		return nil, err
+			//	}
+			//	resp = c.tranfUnZip(zipData)
+			//}
 			return resp, nil
 		}
 		n, err := c.sock.Read(tmp[0:])
@@ -961,73 +863,6 @@ func (c *Client) parse() []string {
 	return []string{}
 }
 
-//this function for transfer data only use.
-func (c *Client) tranfUnZip(data []byte) []string {
-	var buf bytes.Buffer
-	buf.Write(data)
-	zipReader, err := gzip.NewReader(&buf)
-	if err != nil {
-		log.Println("[ERROR] New gzip reader:", err)
-	}
-	defer zipReader.Close()
-
-	zipData, err := ioutil.ReadAll(zipReader)
-	if err != nil {
-		fmt.Println("[ERROR] ReadAll:", err)
-		return nil
-	}
-	var resp []string
-
-	if zipData != nil {
-		Idx := 0
-		offset := 0
-		hiIdx := 0
-		for {
-			Idx = bytes.IndexByte(zipData, '\n')
-			if Idx == -1 {
-				break
-			}
-			p := string(zipData[:Idx])
-			//fmt.Println("p:[",p,"]\n")
-			size, err := strconv.Atoi(string(p))
-			if err != nil || size < 0 {
-				zipData = zipData[Idx+1:]
-				continue
-			} else {
-				offset = Idx + 1 + size
-				hiIdx = size + Idx + 1
-				resp = append(resp, string(zipData[Idx+1:hiIdx]))
-				//fmt.Printf("data:[%s] size:%d Idx:%d\n",str,size,Idx+1)
-				zipData = zipData[offset:]
-			}
-
-		}
-	}
-	return resp
-}
-
-func (c *Client) UnZip(data string) ([]byte, error) {
-	var buf bytes.Buffer
-	zipData, err := base64.StdEncoding.DecodeString(data)
-	if err != nil {
-		return []byte{}, err
-	}
-	buf.Write(zipData)
-	zipReader, err := gzip.NewReader(&buf)
-	if err != nil {
-		log.Println("[ERROR] New gzip reader:", err)
-	}
-	defer zipReader.Close()
-
-	unzipData, err := ioutil.ReadAll(zipReader)
-	if err != nil {
-		fmt.Println("[ERROR] ReadAll:", err)
-		return []byte{}, err
-	}
-	buf.Reset()
-	return unzipData, nil
-}
-
 // Close The Client Connection
 func (c *Client) Close() error {
 	defer func() {
@@ -1047,6 +882,5 @@ func (c *Client) Close() error {
 		log.Printf("Connection close:%v Addr:%v\n", c.Id, c.sock.LocalAddr())
 		c = nil
 	}
-
 	return nil
 }
